@@ -19,6 +19,7 @@ yarn-error.log*
 # Environment / Secrets
 .env
 frontend/.env
+frontend/.env.production
 
 # Terraform
 **/.terraform/*

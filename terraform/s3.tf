@@ -70,7 +70,7 @@ resource "aws_s3_bucket_versioning" "audit_logs" {
 
 resource "aws_s3_bucket" "frontend_assets" {
   bucket        = "${var.project_name}-frontend-${random_id.bucket_suffix.hex}"
-  force_destroy = true 
+  force_destroy = true
 
   tags = {
     Name    = "${var.project_name}-frontend-assets"

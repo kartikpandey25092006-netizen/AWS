@@ -100,23 +100,23 @@ resource "aws_iam_role_policy" "lambda_permissions" {
       },
       # 2. S3 – write audit logs to the specific bucket only
       {
-        Sid    = "S3PutAuditLog"
-        Effect = "Allow"
-        Action = ["s3:PutObject"]
+        Sid      = "S3PutAuditLog"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
         Resource = "${aws_s3_bucket.audit_logs.arn}/*"
       },
       # 3. SSM – send commands and get command invocation details
       {
-        Sid    = "SSMCommand"
-        Effect = "Allow"
-        Action = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
+        Sid      = "SSMCommand"
+        Effect   = "Allow"
+        Action   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
         Resource = "*"
       },
       # 4. DynamoDB – write audit logs
       {
-        Sid    = "DynamoDBPutAuditLog"
-        Effect = "Allow"
-        Action = ["dynamodb:PutItem"]
+        Sid      = "DynamoDBPutAuditLog"
+        Effect   = "Allow"
+        Action   = ["dynamodb:PutItem"]
         Resource = aws_dynamodb_table.audit_logs.arn
       }
     ]
@@ -164,9 +164,9 @@ resource "aws_iam_role_policy" "api_lambda_permissions" {
       },
       # 2. CloudWatch Metrics (Read CPU)
       {
-        Sid    = "CloudWatchMetricsRead"
-        Effect = "Allow"
-        Action = ["cloudwatch:GetMetricStatistics"]
+        Sid      = "CloudWatchMetricsRead"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:GetMetricStatistics"]
         Resource = "*"
       },
       # 3. DynamoDB (Query Audit Logs & Get State)
@@ -184,9 +184,9 @@ resource "aws_iam_role_policy" "api_lambda_permissions" {
       },
       # 4. EC2 (DescribeInstances for Uptime)
       {
-        Sid    = "EC2Describe"
-        Effect = "Allow"
-        Action = ["ec2:DescribeInstances"]
+        Sid      = "EC2Describe"
+        Effect   = "Allow"
+        Action   = ["ec2:DescribeInstances"]
         Resource = "*"
       },
       # 5. CloudWatch Alarms (Maintenance Mode Toggle)
@@ -268,9 +268,9 @@ resource "aws_iam_role_policy" "health_manager_permissions" {
       },
       # 4. SNS Publish
       {
-        Sid    = "SNSPublish"
-        Effect = "Allow"
-        Action = ["sns:Publish"]
+        Sid      = "SNSPublish"
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
         Resource = aws_sns_topic.ops_notifications.arn
       }
     ]
@@ -318,9 +318,9 @@ resource "aws_iam_role_policy" "predictor_permissions" {
       },
       # 2. CloudWatch Metrics – read CPU and Memory data
       {
-        Sid    = "CloudWatchMetricsRead"
-        Effect = "Allow"
-        Action = ["cloudwatch:GetMetricStatistics"]
+        Sid      = "CloudWatchMetricsRead"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:GetMetricStatistics"]
         Resource = "*"
       }
     ]

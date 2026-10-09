@@ -10,6 +10,9 @@ cd terraform
 FRONTEND_BUCKET=$(terraform output -raw s3_frontend_bucket)
 INSTANCE_ID=$(terraform output -raw ec2_instance_id)
 API_URL=$(terraform output -raw api_gateway_url)
+COGNITO_AUTHORITY=$(terraform output -raw cognito_authority)
+COGNITO_CLIENT_ID=$(terraform output -raw cognito_user_pool_client_id)
+COGNITO_DOMAIN=$(terraform output -raw cognito_domain)
 cd ..
 
 if [ -z "$FRONTEND_BUCKET" ] || [ -z "$INSTANCE_ID" ]; then
@@ -17,7 +20,13 @@ if [ -z "$FRONTEND_BUCKET" ] || [ -z "$INSTANCE_ID" ]; then
     exit 1
 fi
 
-echo "VITE_API_URL=$API_URL" > frontend/.env.production
+cat <<EOF > frontend/.env.production
+VITE_API_URL=$API_URL
+VITE_COGNITO_AUTHORITY=$COGNITO_AUTHORITY
+VITE_COGNITO_CLIENT_ID=$COGNITO_CLIENT_ID
+VITE_COGNITO_DOMAIN=$COGNITO_DOMAIN
+EOF
+
 
 # 2. Build the React app
 echo "📦 Building frontend..."

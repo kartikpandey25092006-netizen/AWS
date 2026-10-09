@@ -1,16 +1,20 @@
 import { useState, useEffect } from 'react';
-import { 
-  Server, 
-  Cpu, 
-  Activity, 
-  ShieldCheck, 
+import { useAuth } from 'react-oidc-context';
+import {
+  Server,
+  Cpu,
+  Activity,
+  ShieldCheck,
   Terminal,
   CheckCircle2,
   Sun,
   Moon,
   Clock,
   RefreshCw,
-  XCircle
+  XCircle,
+  LogIn,
+  LogOut,
+  User
 } from 'lucide-react';
 import './index.css';
 
@@ -36,6 +40,7 @@ interface HealingState {
 }
 
 function App() {
+  const auth = useAuth();
   const [theme, setTheme] = useState('dark');
   const [uptime, setUptime] = useState(0);
   const [history, setHistory] = useState(Array.from({ length: 20 }).map(() => ({ time: '', cpu: 0 })));
@@ -67,9 +72,14 @@ function App() {
       console.warn('VITE_API_URL is not set. Cannot fetch live metrics.');
       return;
     }
-    
+
     try {
-      const res = await fetch(`${apiUrl}/api/status?time_range=${currentRange}`);
+      const headers: Record<string, string> = {};
+      if (auth.user?.access_token) {
+        headers['Authorization'] = `Bearer ${auth.user.access_token}`;
+      }
+
+      const res = await fetch(`${apiUrl}/api/status?time_range=${currentRange}`, { headers });
       if (res.ok) {
         const data = await res.json();
         setUptime(data.uptime || 0);
@@ -92,10 +102,15 @@ function App() {
   };
 
   useEffect(() => {
+    const isAuthRequired = Boolean(import.meta.env.VITE_COGNITO_AUTHORITY);
+    if (isAuthRequired && !auth.isAuthenticated) {
+      return;
+    }
+
     fetchData(timeRange); // Initial fetch
     const interval = setInterval(() => fetchData(timeRange), 10000); // Poll every 10s
     return () => clearInterval(interval);
-  }, [timeRange]);
+  }, [timeRange, auth.isAuthenticated, auth.user?.access_token]);
 
   // Uptime local tick (so seconds update between polls)
   useEffect(() => {
@@ -129,22 +144,37 @@ function App() {
   };
 
   const handleSimulateClick = () => {
-    alert("To simulate a real CPU spike, SSH into the instance or use SSM to run: 'yes > /dev/null &'.\\n\\nThe backend will detect it, trigger an alarm, and restart Nginx automatically.");
+    alert("To simulate a real CPU spike, SSH into the instance or use SSM to run: 'yes > /dev/null &'.\n\nThe backend will detect it, trigger an alarm, and restart Nginx automatically.");
   };
 
   const toggleMaintenanceMode = async () => {
+    const isAuthRequired = Boolean(import.meta.env.VITE_COGNITO_AUTHORITY);
+    if (isAuthRequired && !auth.isAuthenticated) {
+      alert("Authentication required to toggle maintenance mode.");
+      return;
+    }
+
     setIsTogglingMaintenance(true);
     const newMode = !maintenanceMode;
     setMaintenanceMode(newMode); // Optimistic update
-    
+
     const apiUrl = import.meta.env.VITE_API_URL;
     if (apiUrl) {
       try {
-        await fetch(`${apiUrl}/api/maintenance`, {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (auth.user?.access_token) {
+          headers['Authorization'] = `Bearer ${auth.user.access_token}`;
+        }
+        const res = await fetch(`${apiUrl}/api/maintenance`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ maintenance: newMode })
         });
+        if (!res.ok) {
+          console.error(`Maintenance API error: ${res.status}`);
+          setMaintenanceMode(!newMode); // Revert optimistic update on 401/403/500
+          alert(`Failed to update maintenance mode (HTTP ${res.status}). Authorization or server error.`);
+        }
       } catch (e) {
         console.error('Failed to toggle maintenance mode', e);
         setMaintenanceMode(!newMode); // revert
@@ -152,6 +182,7 @@ function App() {
     }
     setIsTogglingMaintenance(false);
   };
+
 
   const renderAuditLog = (log: AuditLog, i: number) => {
     if (log.event_type === 'remediation') {
@@ -179,9 +210,9 @@ function App() {
               </span>
             )}
             {success && log.health_check_status && (
-              <span style={{ 
-                fontSize: '0.85rem', 
-                color: log.health_check_status === 'PASSED' ? 'var(--accent-green)' : (log.health_check_status === 'FAILED' ? 'var(--accent-red)' : 'var(--text-secondary)'), 
+              <span style={{
+                fontSize: '0.85rem',
+                color: log.health_check_status === 'PASSED' ? 'var(--accent-green)' : (log.health_check_status === 'FAILED' ? 'var(--accent-red)' : 'var(--text-secondary)'),
                 marginTop: '0.25rem',
                 display: 'flex',
                 alignItems: 'center',
@@ -209,14 +240,52 @@ function App() {
     return null;
   };
 
+  const isAuthRequired = Boolean(import.meta.env.VITE_COGNITO_AUTHORITY);
+
+  // 1. Handle loading state while checking session
+  if (auth.isLoading) {
+    return (
+      <div className="app-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
+        <div className="glass-panel" style={{ padding: '2.5rem', textAlign: 'center' }}>
+          <RefreshCw size={32} className="spin" style={{ color: 'var(--accent-blue)', marginBottom: '1rem' }} />
+          <h2>Verifying Operator Session...</h2>
+          <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Connecting to AWS Cognito Identity Provider</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Handle unauthenticated state when Cognito authority is configured
+  if (isAuthRequired && !auth.isAuthenticated) {
+    return (
+      <div className="app-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
+        <div className="glass-panel" style={{ padding: '3rem', textAlign: 'center', maxWidth: '480px', width: '100%' }}>
+          <ShieldCheck size={48} color="var(--accent-blue)" style={{ marginBottom: '1rem' }} />
+          <h2>Authentication Required</h2>
+          <p style={{ color: 'var(--text-secondary)', margin: '1rem 0 2rem', lineHeight: '1.5' }}>
+            Access to CloudOps infrastructure telemetry, health metrics, and automated remediation controls is restricted to authorized operators.
+          </p>
+          <button
+            className="btn"
+            onClick={() => auth.signinRedirect()}
+            style={{ background: 'var(--accent-blue)', color: '#fff', width: '100%', justifyContent: 'center', padding: '0.85rem' }}
+          >
+            <LogIn size={18} /> Sign In via AWS Cognito
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
+
     <div className="app-container">
       <header className="header">
         <div>
           <h1 style={{ display: 'flex', alignItems: 'center' }}>
             CloudOps System
             {maintenanceMode && (
-              <span style={{fontSize: '0.9rem', padding: '0.2rem 0.5rem', background: 'var(--accent-orange)', color: '#000', borderRadius: '1rem', marginLeft: '0.5rem'}}>
+              <span style={{ fontSize: '0.9rem', padding: '0.2rem 0.5rem', background: 'var(--accent-orange)', color: '#000', borderRadius: '1rem', marginLeft: '0.5rem' }}>
                 MAINTENANCE MODE
               </span>
             )}
@@ -226,14 +295,39 @@ function App() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          {isLoading && <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}><RefreshCw size={14} className="spin" style={{marginRight: '0.5rem'}}/>Connecting to AWS...</span>}
-          
-          <button 
-            className="btn" 
+          {isLoading && <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}><RefreshCw size={14} className="spin" style={{ marginRight: '0.5rem' }} />Connecting to AWS...</span>}
+
+          {auth.isAuthenticated ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-card)', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              <User size={16} color="var(--accent-green)" />
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+                {auth.user?.profile?.email || 'Operator'}
+              </span>
+              <button
+                onClick={() => auth.removeUser()}
+                className="btn"
+                style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: 'transparent', border: 'none', color: 'var(--accent-red)' }}
+                title="Sign Out"
+              >
+                <LogOut size={14} />
+              </button>
+            </div>
+          ) : (
+            <button
+              className="btn"
+              onClick={() => auth.signinRedirect()}
+              style={{ background: 'var(--accent-blue)', color: '#fff', border: 'none' }}
+            >
+              <LogIn size={16} /> Sign In via Cognito
+            </button>
+          )}
+
+          <button
+            className="btn"
             onClick={toggleMaintenanceMode}
             disabled={isTogglingMaintenance}
-            style={{ 
-              background: maintenanceMode ? 'var(--accent-orange)' : 'var(--bg-card)', 
+            style={{
+              background: maintenanceMode ? 'var(--accent-orange)' : 'var(--bg-card)',
               color: maintenanceMode ? '#000' : 'var(--text-primary)',
               border: maintenanceMode ? 'none' : '1px solid var(--border)'
             }}
@@ -242,8 +336,8 @@ function App() {
             {maintenanceMode ? 'Maintenance ON' : 'Maintenance OFF'}
           </button>
 
-          <button 
-            className="btn" 
+          <button
+            className="btn"
             onClick={toggleTheme}
             style={{ padding: '0.75rem', borderRadius: '50%', background: 'var(--bg-card)', color: 'var(--text-primary)' }}
           >
@@ -255,6 +349,7 @@ function App() {
           </button>
         </div>
       </header>
+
 
       <div className="bento-grid">
         {/* EC2 Health */}
@@ -313,23 +408,23 @@ function App() {
           <div className="status-header">
             <Activity size={20} color={activeGraph === 'cpu' ? (isSimulating ? 'var(--accent-red)' : 'var(--accent-blue)') : 'var(--accent-purple)'} />
             <div style={{ display: 'flex', gap: '0.2rem', background: 'var(--bg-main)', padding: '2px', borderRadius: '4px' }}>
-              <button 
+              <button
                 onClick={() => setActiveGraph('cpu')}
                 style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', border: 'none', background: activeGraph === 'cpu' ? 'var(--accent-blue)' : 'transparent', color: activeGraph === 'cpu' ? '#000' : 'var(--text-secondary)', fontSize: '0.85rem', cursor: 'pointer' }}
               >
                 CPU
               </button>
-              <button 
+              <button
                 onClick={() => setActiveGraph('memory')}
                 style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', border: 'none', background: activeGraph === 'memory' ? 'var(--accent-purple)' : 'transparent', color: activeGraph === 'memory' ? '#000' : 'var(--text-secondary)', fontSize: '0.85rem', cursor: 'pointer' }}
               >
                 Memory
               </button>
             </div>
-            
+
             <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-              <select 
-                value={timeRange} 
+              <select
+                value={timeRange}
                 onChange={(e) => setTimeRange(e.target.value)}
                 style={{ background: 'var(--bg-main)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: '4px', padding: '0.2rem 0.5rem', fontSize: '0.85rem' }}
               >
@@ -337,8 +432,8 @@ function App() {
                 <option value="1h">Last 1 Hour</option>
                 <option value="24h">Last 24 Hours</option>
               </select>
-              <span className={`badge ${activeGraph === 'cpu' ? (isSimulating ? '' : 'healthy') : (isMemorySimulating ? '' : 'healthy')}`} style={{ 
-                background: (activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'rgba(239, 68, 68, 0.15)' : '', 
+              <span className={`badge ${activeGraph === 'cpu' ? (isSimulating ? '' : 'healthy') : (isMemorySimulating ? '' : 'healthy')}`} style={{
+                background: (activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'rgba(239, 68, 68, 0.15)' : '',
                 color: (activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'var(--accent-red)' : '',
                 borderColor: (activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'rgba(239, 68, 68, 0.3)' : ''
               }}>
@@ -350,7 +445,7 @@ function App() {
             <span className="status-value">{activeGraph === 'cpu' ? currentCpu : currentMemory}%</span>
             <span className="status-sub">/ {activeGraph === 'cpu' ? '75%' : '85%'} threshold</span>
           </div>
-          
+
           <div style={{ height: '120px', width: '100%', marginTop: 'auto' }}>
             <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
               <polyline
@@ -369,7 +464,7 @@ function App() {
             </svg>
           </div>
         </div>
-        
+
         {/* Uptime Counter */}
         <div className="glass-panel status-card">
           <div className="status-header">
@@ -390,9 +485,9 @@ function App() {
             <ShieldCheck size={20} color="var(--accent-purple)" />
             <span>Active Protections</span>
           </div>
-          <div style={{ 
-            marginTop: 'auto', 
-            display: 'grid', 
+          <div style={{
+            marginTop: 'auto',
+            display: 'grid',
             gridTemplateColumns: '1fr 1fr',
             gap: '1rem'
           }}>
@@ -443,7 +538,7 @@ function App() {
       </div>
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
         <div className="activity-feed">
-          
+
           {(() => {
             const filteredLogs = auditLogs.filter(log => {
               if (logFilter === 'All') return true;
@@ -452,7 +547,7 @@ function App() {
               if (logFilter === 'Errors') return log.error != null || log.success === false;
               return true;
             });
-            
+
             return filteredLogs.length > 0 ? (
               filteredLogs.map((log, i) => renderAuditLog(log, i))
             ) : (
@@ -487,7 +582,7 @@ function App() {
             <tbody>
               {(() => {
                 const incidents = auditLogs.filter(log => log.error != null || log.success === false || log.event_type === 'remediation');
-                
+
                 if (incidents.length === 0) {
                   return (
                     <tr>

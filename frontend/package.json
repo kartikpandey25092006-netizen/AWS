@@ -11,9 +11,11 @@
   },
   "dependencies": {
     "lucide-react": "^1.43.0",
+    "oidc-client-ts": "^3.5.0",
     "puppeteer": "^25.10.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-oidc-context": "^3.3.1",
     "recharts": "^3.10.1"
   },
   "devDependencies": {

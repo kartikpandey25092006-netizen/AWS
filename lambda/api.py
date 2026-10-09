@@ -19,50 +19,39 @@ def handler(event, context):
     raw_path = event.get('rawPath', '')
     method = event.get('requestContext', {}).get('http', {}).get('method', 'GET')
     print(f"Received API request: {method} {raw_path}")
-    
-    # Handle CORS preflight
-    if method == "OPTIONS":
-        return {
-            "statusCode": 204,
-            "headers": {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type"
-            }
-        }
-    
+
     try:
         if raw_path == "/api/maintenance" and method == "POST":
             body = json.loads(event.get("body", "{}"))
             maintenance_mode = body.get("maintenance", False)
-            
+
             alarms = cloudwatch.describe_alarms(AlarmNamePrefix="self-healing")["MetricAlarms"]
             alarm_names = [a["AlarmName"] for a in alarms]
-            
+
             if alarm_names:
                 if maintenance_mode:
                     cloudwatch.disable_alarm_actions(AlarmNames=alarm_names)
                 else:
                     cloudwatch.enable_alarm_actions(AlarmNames=alarm_names)
-                
+
             return {
                 "statusCode": 200,
-                "headers": {"Access-Control-Allow-Origin": "*", "Content-Type": "application/json"},
+                "headers": {"Content-Type": "application/json"},
                 "body": json.dumps({"success": True, "maintenance": maintenance_mode, "alarms_updated": len(alarm_names)})
             }
-            
+
         else: # GET /api/status
             time_range = event.get("queryStringParameters", {}).get("time_range", "40m") if event.get("queryStringParameters") else "40m"
-            
+
             uptime_seconds = get_uptime(INSTANCE_ID)
             cpu_history, current_cpu, is_simulating = get_cpu_metrics(INSTANCE_ID, time_range)
             memory_history, current_memory, is_memory_simulating = get_memory_metrics(INSTANCE_ID, time_range)
             audit_logs = get_audit_logs(INSTANCE_ID)
             healing_state = get_healing_state()
-            
+
             alarms = cloudwatch.describe_alarms(AlarmNamePrefix="self-healing")["MetricAlarms"]
             maintenance_mode = any(a.get("ActionsEnabled") == False for a in alarms)
-            
+
             body = {
                 "uptime": uptime_seconds,
                 "cpu_history": cpu_history,
@@ -83,26 +72,25 @@ def handler(event, context):
                     healing_state=healing_state
                 )
             }
-            
+
             return {
                 "statusCode": 200,
                 "headers": {
-                    "Content-Type": "application/json",
-                    "Access-Control-Allow-Origin": "*"
+                    "Content-Type": "application/json"
                 },
                 "body": json.dumps(body, cls=DecimalEncoder)
             }
-            
+
     except Exception as e:
         print(f"API Error: {e}")
         return {
             "statusCode": 500,
             "headers": {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*"
+                "Content-Type": "application/json"
             },
             "body": json.dumps({"error": str(e)})
         }
+
 
 def get_uptime(instance_id):
     try:

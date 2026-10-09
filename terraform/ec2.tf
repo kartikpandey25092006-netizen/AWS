@@ -95,7 +95,7 @@ resource "aws_instance" "web_server" {
   user_data_replace_on_change = true
 
   root_block_device {
-    volume_size           = 8    # GB – within Free Tier (30 GB allowance)
+    volume_size           = 8 # GB – within Free Tier (30 GB allowance)
     volume_type           = "gp3"
     delete_on_termination = true
   }

@@ -88,3 +88,36 @@ output "test_stop_stress_command" {
   description = "SSM command to stop the stress test"
   value       = "aws ssm send-command --instance-ids ${aws_instance.web_server.id} --document-name AWS-RunShellScript --parameters 'commands=[\"pkill -f stress-ng\"]' --comment 'Stop stress test'"
 }
+
+# ── Cognito Authentication ───────────────────────────────────────────────
+output "cognito_user_pool_id" {
+  description = "Cognito User Pool ID"
+  value       = aws_cognito_user_pool.pool.id
+}
+
+output "cognito_user_pool_client_id" {
+  description = "Cognito User Pool App Client ID"
+  value       = aws_cognito_user_pool_client.client.id
+}
+
+output "cognito_domain" {
+  description = "Cognito Hosted UI Domain prefix URL"
+  value       = "https://${aws_cognito_user_pool_domain.domain.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"
+}
+
+output "cognito_authority" {
+  description = "OIDC Issuer / Authority URL"
+  value       = "https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${aws_cognito_user_pool.pool.id}"
+}
+
+output "admin_user_creation_command" {
+  description = "AWS CLI command to create the initial dashboard operator user"
+  value       = "aws cognito-idp admin-create-user --user-pool-id ${aws_cognito_user_pool.pool.id} --username admin@cloudops.internal --user-attributes Name=email,Value=admin@cloudops.internal Name=email_verified,Value=true"
+}
+
+output "cloudfront_domain" {
+  description = "CloudFront HTTPS Distribution URL for Frontend"
+  value       = "https://${aws_cloudfront_distribution.frontend.domain_name}"
+}
+
+

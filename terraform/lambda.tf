@@ -11,13 +11,13 @@ data "archive_file" "lambda_zip" {
 
 # ── Lambda function ───────────────────────────────────────────────────────
 resource "aws_lambda_function" "remediation" {
-  function_name    = "${var.project_name}-remediation"
-  description      = "Restarts nginx on EC2 via SSM when CloudWatch alarm fires"
-  role             = aws_iam_role.lambda_exec_role.arn
-  handler          = "main.handler"
-  runtime          = "python3.12"
-  timeout          = 30
-  memory_size      = 128 # minimum – Free Tier gives 1M requests & 400k GB-s/month
+  function_name = "${var.project_name}-remediation"
+  description   = "Restarts nginx on EC2 via SSM when CloudWatch alarm fires"
+  role          = aws_iam_role.lambda_exec_role.arn
+  handler       = "main.handler"
+  runtime       = "python3.12"
+  timeout       = 30
+  memory_size   = 128 # minimum – Free Tier gives 1M requests & 400k GB-s/month
 
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
@@ -72,23 +72,23 @@ data "archive_file" "health_manager_zip" {
 }
 
 resource "aws_lambda_function" "health_manager" {
-  function_name    = "${var.project_name}-health-manager"
-  description      = "Centralized state manager for self-healing workflow"
-  role             = aws_iam_role.health_manager_role.arn
-  handler          = "health_manager.handler"
-  runtime          = "python3.12"
-  timeout          = 30
-  memory_size      = 128
+  function_name = "${var.project_name}-health-manager"
+  description   = "Centralized state manager for self-healing workflow"
+  role          = aws_iam_role.health_manager_role.arn
+  handler       = "health_manager.handler"
+  runtime       = "python3.12"
+  timeout       = 30
+  memory_size   = 128
 
   filename         = data.archive_file.health_manager_zip.output_path
   source_code_hash = data.archive_file.health_manager_zip.output_base64sha256
 
   environment {
     variables = {
-      STATE_TABLE    = aws_dynamodb_table.state_table.name
-      AUDIT_TABLE    = aws_dynamodb_table.audit_logs.name
-      OPS_TOPIC_ARN  = aws_sns_topic.ops_notifications.arn
-      INSTANCE_ID    = aws_instance.web_server.id
+      STATE_TABLE   = aws_dynamodb_table.state_table.name
+      AUDIT_TABLE   = aws_dynamodb_table.audit_logs.name
+      OPS_TOPIC_ARN = aws_sns_topic.ops_notifications.arn
+      INSTANCE_ID   = aws_instance.web_server.id
     }
   }
 
@@ -98,7 +98,7 @@ resource "aws_lambda_function" "health_manager" {
 resource "aws_cloudwatch_log_group" "health_manager_logs" {
   name              = "/aws/lambda/${aws_lambda_function.health_manager.function_name}"
   retention_in_days = 14
-  tags = { Project = var.project_name }
+  tags              = { Project = var.project_name }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -112,13 +112,13 @@ data "archive_file" "predictor_zip" {
 }
 
 resource "aws_lambda_function" "predictor" {
-  function_name    = "${var.project_name}-predictor"
-  description      = "Predictive failure detection using linear regression on CloudWatch metrics"
-  role             = aws_iam_role.predictor_role.arn
-  handler          = "predictor.handler"
-  runtime          = "python3.12"
-  timeout          = 30
-  memory_size      = 128
+  function_name = "${var.project_name}-predictor"
+  description   = "Predictive failure detection using linear regression on CloudWatch metrics"
+  role          = aws_iam_role.predictor_role.arn
+  handler       = "predictor.handler"
+  runtime       = "python3.12"
+  timeout       = 30
+  memory_size   = 128
 
   filename         = data.archive_file.predictor_zip.output_path
   source_code_hash = data.archive_file.predictor_zip.output_base64sha256
@@ -136,5 +136,5 @@ resource "aws_lambda_function" "predictor" {
 resource "aws_cloudwatch_log_group" "predictor_logs" {
   name              = "/aws/lambda/${aws_lambda_function.predictor.function_name}"
   retention_in_days = 14
-  tags = { Project = var.project_name }
+  tags              = { Project = var.project_name }
 }

@@ -11,13 +11,13 @@ data "archive_file" "api_zip" {
 
 # ── Lambda function ───────────────────────────────────────────────────────
 resource "aws_lambda_function" "api_handler" {
-  function_name    = "${var.project_name}-api"
-  description      = "Serves real-time AWS metrics and logs to the frontend"
-  role             = aws_iam_role.api_lambda_role.arn
-  handler          = "api.handler"
-  runtime          = "python3.12"
-  timeout          = 10
-  memory_size      = 128
+  function_name = "${var.project_name}-api"
+  description   = "Serves real-time AWS metrics and logs to the frontend"
+  role          = aws_iam_role.api_lambda_role.arn
+  handler       = "api.handler"
+  runtime       = "python3.12"
+  timeout       = 10
+  memory_size   = 128
 
   filename         = data.archive_file.api_zip.output_path
   source_code_hash = data.archive_file.api_zip.output_base64sha256
@@ -51,9 +51,12 @@ resource "aws_apigatewayv2_api" "frontend_api" {
   protocol_type = "HTTP"
 
   cors_configuration {
-    allow_origins = ["*"] # In production, restrict to frontend domain
-    allow_methods = ["GET", "OPTIONS"]
-    allow_headers = ["content-type"]
+    allow_origins = [
+      "https://${aws_cloudfront_distribution.frontend.domain_name}",
+      "http://localhost:3000"
+    ]
+    allow_methods = ["GET", "POST", "OPTIONS"]
+    allow_headers = ["Authorization", "Content-Type"]
     max_age       = 300
   }
 
@@ -66,18 +69,40 @@ resource "aws_apigatewayv2_stage" "api_stage" {
   auto_deploy = true
 }
 
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id           = aws_apigatewayv2_api.frontend_api.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "cognito-jwt-authorizer"
+
+  jwt_configuration {
+    issuer   = "https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${aws_cognito_user_pool.pool.id}"
+    audience = [aws_cognito_user_pool_client.client.id]
+  }
+}
+
 resource "aws_apigatewayv2_integration" "lambda_integration" {
   api_id           = aws_apigatewayv2_api.frontend_api.id
   integration_type = "AWS_PROXY"
-  
+
   integration_method = "POST"
   integration_uri    = aws_lambda_function.api_handler.invoke_arn
 }
 
-resource "aws_apigatewayv2_route" "api_route" {
-  api_id    = aws_apigatewayv2_api.frontend_api.id
-  route_key = "GET /api/status"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+resource "aws_apigatewayv2_route" "status_route" {
+  api_id             = aws_apigatewayv2_api.frontend_api.id
+  route_key          = "GET /api/status"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
+}
+
+resource "aws_apigatewayv2_route" "maintenance_route" {
+  api_id             = aws_apigatewayv2_api.frontend_api.id
+  route_key          = "POST /api/maintenance"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
 resource "aws_lambda_permission" "allow_api_gateway" {
@@ -87,3 +112,4 @@ resource "aws_lambda_permission" "allow_api_gateway" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.frontend_api.execution_arn}/*/*"
 }
+

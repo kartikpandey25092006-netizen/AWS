@@ -186,7 +186,7 @@ resource "aws_cloudwatch_dashboard" "self_healing" {
         width  = 24
         height = 3
         properties = {
-          title  = "🚨 Alarm States"
+          title = "🚨 Alarm States"
           alarms = [
             aws_cloudwatch_metric_alarm.high_cpu.arn,
             aws_cloudwatch_metric_alarm.auto_recovery.arn,
