@@ -1,0 +1,12 @@
+{
+  "name": "cloudops-store-api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "test": "node --test",
+    "lint": "node --check src/app.mjs && node --check src/memory-store.mjs && node --check src/server.mjs"
+  }
+}

@@ -1,17 +1,20 @@
 # Architecture
 
+> Batch 1 status: storefront and CloudOps are now separate Vite apps. The live AWS stack remains the earlier single-EC2 design until the owner reviews and applies the later migration batches.
+
 ## Current system
 
 The project is a single-instance CloudOps demonstration. Terraform provisions the AWS resources; the frontend is a Vite/React single-page app; Python Lambda functions provide the API, event remediation, periodic health checks, and predictive alerts.
 
 ### Frontend and sign-in
 
-- **Framework:** React 19 and TypeScript, built with Vite. Recharts renders metric graphs and Lucide React supplies icons.
+- **Framework:** React 19 and TypeScript, built as two independent Vite apps under frontend/apps/storefront and frontend/apps/cloudops.
 - **Authentication:** Amazon Cognito User Pool Hosted UI. The browser app is a public OIDC client; it sends its access token as a bearer token to the API.
-- **Static hosting:** `deploy-frontend.sh` builds the frontend, uploads it to the private frontend S3 bucket, and asks EC2 through SSM to sync the files into Nginx's document root.
+- **Static hosting:** each app builds independently. The old single-origin deployment script is paused. Separate S3 and CloudFront origins are planned; the current AWS stack is unchanged.
 - **Public delivery:** CloudFront serves the EC2 Nginx origin. Viewer requests are redirected to HTTPS using CloudFront's default certificate. CloudFront connects to the origin over HTTP, and the EC2 security group still permits direct public HTTP access.
 - **Data refresh:** The dashboard polls `GET /api/status` every 10 seconds. It can select 40-minute, 1-hour, or 24-hour metric ranges.
-- **Portfolio storefront:** The app now opens on a static Fieldwork storefront. Catalog filters, search, cart, and simulated checkout run only in browser state; no commerce API or database exists. The operator dashboard stays available through Store navigation.
+- **Storefront:** a separate public app with a static Fieldwork demo catalog, browser-local cart, and simulated checkout. It has no commerce API, persistent order storage, inventory, or payment integration yet.
+- **CloudOps dashboard:** a separate app. Cognito sign-in is required before showing metrics or controls; API Gateway continues to require Cognito JWTs.
 - **UI components:** Vite uses Tailwind CSS v4 and shadcn/ui conventions with local Button, Badge, Input, and Card components. Dashboard styles remain in the existing CSS system.
 
 ### API and authorization
@@ -43,7 +46,7 @@ The CPU alarm defaults to 75%. The memory alarm is 60%; the dashboard indicator 
 - `terraform/` contains the infrastructure definitions. The provider defaults to `us-east-1`; variables allow other regions.
 - Terraform expects a pre-existing S3 state bucket and DynamoDB lock table configured in `terraform/main.tf`.
 - The EC2 instance uses the default VPC, a public IP, an HTTP-only security group, SSM and CloudWatch Agent permissions, and inline user data that installs Nginx and the agent.
-- `deploy-frontend.sh` reads Terraform outputs and requires AWS CLI credentials in the shell environment. It does not select a profile itself.
+- The legacy deploy-frontend.sh script is paused until separate S3 and CloudFront origins are added. AWS changes remain owner-run.
 
 ## Current limitations and follow-up
 
@@ -53,3 +56,5 @@ The CPU alarm defaults to 75%. The memory alarm is 60%; the dashboard indicator 
 - The health score is calculated by the API. The current React app does not render the returned `health_score` object.
 - The predictor runs periodically but its scheduled pre-alert is separate from the CloudWatch alarm remediation path.
 - Project documentation and load-test files may contain old target IPs, thresholds, or claims. Confirm against Terraform outputs and deployed AWS state before relying on them.
+
+See IMPLEMENTATION_BATCHES.md for the staged target architecture and owner-run acceptance checks.

@@ -40,3 +40,4 @@ terraform/.build/
 # Python
 __pycache__/
 *.pyc
+/.pnpm-store/

@@ -11,8 +11,9 @@ This is a demonstration project, not a production payment system. Start with a s
 
 ## Current progress
 
-- The Vite frontend now opens on a simple Fieldwork demo storefront with a static catalog, category filters, search, local cart, and an explicitly simulated checkout.
-- The CloudOps dashboard remains available from the Store navigation.
+See IMPLEMENTATION_BATCHES.md for the ordered redesign and test criteria.
+
+- The public storefront and Cognito-protected CloudOps dashboard now build as separate frontends.
 - The storefront does not persist cart/orders, process payments, reserve inventory, store newsletter addresses, or call a commerce API.
 - The product cards depict physical-style objects, but the project owner has not chosen a physical/digital fulfillment model. No inventory schema or database decision has been made.
 - The frontend uses the shadcn/ui Vite setup with local Button, Badge, Input, and Card primitives.

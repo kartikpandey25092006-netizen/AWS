@@ -56,12 +56,32 @@
 
 **Status:** Pending Phase 1 of `PRODUCT_ROADMAP.md`.
 
-## ADR 7: Static storefront as the portfolio UI milestone
+## ADR 7: Two separate frontends and demo checkout
 
-**Decision:** Add a static Fieldwork storefront using local demo products, browser-local cart state, and a simulated checkout. Keep the CloudOps dashboard available as a separate operator view. Use the current shadcn/ui Vite approach for shared storefront primitives.
+**Decision:** Build exactly two independent frontends: a public Fieldwork storefront and a Cognito-protected CloudOps operator dashboard. Keep checkout simulated and do not collect payment details.
 
-**Reason:** Demonstrate a broader customer-facing application without claiming that a commerce backend, real payments, inventory, or saved customer data exists.
+**Reason:** The operator console is a distinct audience and trust boundary from the public storefront.
 
-**Tradeoffs:** Orders disappear on refresh and no customer/admin authorization can be demonstrated until a backend is designed. The product type and storage remain open decisions.
+**Tradeoffs:** Separate deployment origins and Cognito callback updates are required. The current storefront is still static and has no persistent commerce API.
 
-**Status:** Frontend milestone implemented; backend decisions pending.
+**Status:** Frontend split implemented locally; AWS migration pending.
+
+## ADR 8: RDS is the commerce source of truth; Redis-compatible cache is disposable
+
+**Decision:** Use RDS for PostgreSQL for catalog and demo orders, and ElastiCache Valkey for disposable catalog cache data. Keep operational audit/state in DynamoDB.
+
+**Reason:** Commerce queries and order consistency are relational; operational records have separate key-based access patterns. Cache loss must not lose orders.
+
+**Tradeoffs:** Both services add cost and private-networking requirements. Review the Terraform plan and current regional pricing before deployment.
+
+**Status:** Target decision; implementation pending.
+
+## ADR 9: ALB and EC2 Auto Scaling Group for the Store API
+
+**Decision:** Place the Store API behind an Application Load Balancer and a multi-AZ Auto Scaling Group. Allow inbound instance traffic only from the ALB security group. Use ALB health checks and Auto Scaling replacement for unhealthy instances; scale out under sustained load.
+
+**Reason:** A real storefront API workload can exercise CPU/memory alarms and scaling while preserving the existing recovery demonstration.
+
+**Tradeoffs:** Requires a multi-subnet network and launch-template/bootstrap automation. High CPU should trigger scale-out rather than repeatedly restarting healthy services.
+
+**Status:** Target decision; implementation pending.

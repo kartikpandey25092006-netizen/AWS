@@ -1,7 +1,8 @@
 {
   "phase": "Phase 1 - Baseline",
   "timestamp": "2026-09-18T04:34:40.253Z",
-  "target": "http://98.91.176.47",
+  "target": "Historical deployment target redacted",
+  "note": "Historical measurements only; do not use as the current baseline.",
   "metrics": {
     "total_requests": 1176,
     "rps": "9.78",

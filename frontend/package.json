@@ -4,10 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "dev": "npm run dev:storefront",
+    "dev:storefront": "vite --config apps/storefront/vite.config.ts --host 127.0.0.1 --port 5173",
+    "dev:cloudops": "vite --config apps/cloudops/vite.config.ts --host 127.0.0.1 --port 5174",
+    "build": "npm run build:storefront && npm run build:cloudops",
+    "build:storefront": "tsc --noEmit -p apps/storefront/tsconfig.json && vite build --config apps/storefront/vite.config.ts",
+    "build:cloudops": "tsc --noEmit -p apps/cloudops/tsconfig.json && vite build --config apps/cloudops/vite.config.ts",
+    "lint": "oxlint apps/storefront/src apps/cloudops/src",
+    "preview:storefront": "vite preview --config apps/storefront/vite.config.ts --host 127.0.0.1 --port 4173",
+    "preview:cloudops": "vite preview --config apps/cloudops/vite.config.ts --host 127.0.0.1 --port 4174",
+    "test:smoke": "node scripts/smoke-frontends.cjs"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",

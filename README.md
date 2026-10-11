@@ -1,267 +1,44 @@
-# Self-Healing Cloud Infrastructure on AWS
+# CloudOps Store
 
-A portfolio CloudOps project that monitors a single EC2 web server, attempts automated recovery, records operational events, and displays system health in a React dashboard. AWS charges depend on account eligibility, region, usage, and current pricing; review costs before deploying.
+This project combines an operator dashboard for self-healing cloud infrastructure with a customer-facing demo storefront. The redesign uses exactly two separate frontends.
 
-The frontend now opens on the **Fieldwork demo storefront** with a static catalog, local cart, and simulated checkout. The existing operator dashboard remains accessible from Store navigation. No commerce API, persistent order storage, inventory system, real payment, or email-list storage is implemented.
+## Current state
 
-## Architecture
+- The Fieldwork storefront and CloudOps dashboard are independent Vite apps.
+- The storefront is public and still uses a static demo catalog, browser-local cart, and simulated checkout.
+- The CloudOps dashboard requires Cognito configuration and sign-in before showing metrics or controls. Its API continues to validate Cognito JWTs.
+- The current AWS infrastructure is still the earlier single-EC2 stack. There is no commerce API, RDS database, Redis cache, ALB, or Auto Scaling Group yet.
+- AWS resources have not been changed. The legacy single-origin deployment script is paused because it would publish the two apps incorrectly.
 
-1. CloudWatch CPU and memory alarms publish to SNS. SNS invokes a Lambda that uses SSM to restart Nginx and writes audit records.
-2. An EventBridge Health Manager schedule checks the EC2 status and `/health` endpoint, then can reboot EC2 or restart Nginx.
-3. A separate scheduled Lambda analyzes CPU and memory trends and can send Discord pre-alerts when configured.
-4. EventBridge records EC2 state changes. DynamoDB holds audit/state records, and S3 stores audit objects and frontend build assets.
-5. API Gateway protects the dashboard API routes with Cognito JWT authorization. CloudFront serves the frontend over viewer HTTPS; its current EC2 origin connection is HTTP.
+## Target architecture
 
-## Features Summary
+- Storefront static assets: separate private S3 bucket and CloudFront distribution.
+- CloudOps static assets: separate private S3 bucket and CloudFront distribution; Cognito sign-in and JWT-protected dashboard APIs.
+- Store API: ALB and EC2 Auto Scaling Group.
+- Commerce data: RDS for PostgreSQL.
+- Catalog cache: private ElastiCache Valkey / Redis-compatible cache, with PostgreSQL as the source of truth.
+- Operations: CloudWatch CPU, memory, alarm, ALB, scaling and recovery metrics; existing DynamoDB and S3 audit/state resources remain for CloudOps operations.
 
-| # | Feature | Description |
-|---|---------|-------------|
-| 1 | **Service Recovery** | CPU or memory alarm → SNS → Lambda → SSM Nginx restart |
-| 2 | **Periodic Health Checks** | EventBridge → Health Manager → EC2 reboot or Nginx restart |
-| 3 | **Trend Pre-Alerts** | Scheduled predictor can notify Discord when configured |
-| 4 | **Cognito Sign-In** | API Gateway requires a Cognito JWT for dashboard routes |
-| 5 | **CloudOps Dashboard** | React dashboard polls API metrics, state, and audit events |
-| 6 | **Operational Records** | DynamoDB state/audit data and versioned S3 audit objects |
-| 7 | **HTTPS Delivery** | CloudFront redirects viewer requests to HTTPS; origin remains HTTP |
-| 8 | **Portfolio Storefront** | Static catalog, search, browser-local cart, and simulated checkout |
+The target design and acceptance criteria are documented in docs/IMPLEMENTATION_BATCHES.md. All AWS console changes, Terraform plans/applies, and deployments remain owner-run.
 
-## Prerequisites
+## Start the frontends locally
 
-1. **AWS Account** and an AWS CLI profile with permissions for the resources in Terraform. Charges may apply.
-2. **AWS CLI v2** installed and signed in, for example with `aws login --region us-east-1 --profile your-profile-name`.
-3. **Terraform >= 1.5** installed.
-4. **Node.js and npm** installed to build the frontend.
-5. A **default VPC** in the target region.
-6. The S3 bucket and DynamoDB table named in the Terraform backend must already exist before `terraform init`.
+From the frontend folder, install dependencies with npm ci. Start these in separate terminals:
 
-```bash
-aws --version                   # Verify AWS CLI installation
-aws sts get-caller-identity --profile your-profile-name # Verify credentials
-terraform --version                                # Verify Terraform >= 1.5
-```
+- npm run dev:storefront — storefront on port 5173
+- npm run dev:cloudops — CloudOps on port 5174
 
-The frontend deployment script and several examples use the AWS CLI's default profile. Set `AWS_PROFILE` to the profile you intend to use before running them. In PowerShell, use `$env:AWS_PROFILE = "your-profile-name"`; in Bash, use `export AWS_PROFILE=your-profile-name`.
+Run npm run build and npm run lint to check both frontends. To run the browser smoke checks, start npm run preview:storefront and npm run preview:cloudops in separate terminals, then run npm run test:smoke. On this host the smoke script uses the installed Edge browser when PUPPETEER_EXECUTABLE_PATH is set.
 
-## Project Structure
+Cognito and API settings belong in the ignored frontend/.env file. If Cognito settings are missing, CloudOps displays a configuration-required page and does not show dashboard data.
 
-```
-CloudOps/
-├── lambda/
-│   ├── api.py               # Dashboard API and health score
-│   ├── main.py              # Remediation + lifecycle logger
-│   ├── health_manager.py    # Periodic health checks and recovery
-│   └── predictor.py         # Trend analysis and optional Discord alerts
-├── terraform/
-│   ├── main.tf              # Backend, provider, data sources
-│   ├── variables.tf         # Configurable inputs
-│   ├── api.tf, cognito.tf   # HTTP API and JWT sign-in
-│   ├── ec2.tf, iam.tf       # Web host and roles
-│   ├── lambda.tf            # Lambda functions
-│   └── monitoring.tf, eventbridge.tf, dashboard.tf
-├── frontend/                # React/Vite storefront and CloudOps dashboard
-├── docs/                    # Architecture, security, test plan, roadmap
-├── TASKS.md                 # Prioritized work backlog
-└── README.md
-```
+## Project layout
 
-## Project Documentation
-For an in-depth understanding of the architecture, design, security, and future plans, refer to the `docs/` directory:
-- [ARCHITECTURE.md](./docs/ARCHITECTURE.md)
-- [PRD.md](./docs/PRD.md)
-- [SECURITY.md](./docs/SECURITY.md)
-- [TEST_PLAN.md](./docs/TEST_PLAN.md)
-- [DECISIONS.md](./docs/DECISIONS.md)
-- [MEMORY.md](./docs/MEMORY.md)
-- [PRODUCT_ROADMAP.md](./docs/PRODUCT_ROADMAP.md)
-- [AWS_CONSOLE_BATCHES.md](./docs/AWS_CONSOLE_BATCHES.md)
+- frontend/apps/storefront — public customer storefront
+- frontend/apps/cloudops — Cognito-protected operator dashboard
+- lambda — CloudOps metrics API, recovery, health management, and predictor
+- terraform — current AWS infrastructure definitions and planned migration resources
+- load-tests — load test scripts and results
+- docs/IMPLEMENTATION_BATCHES.md — ordered batches, checks, and owner-run AWS gates
 
-## Run the Portfolio UI Locally
-
-```bash
-cd frontend
-npm ci
-npm run dev
-```
-
-Open the Vite URL shown in the terminal (default `http://localhost:5173`). The Fieldwork storefront works with static demo data. The CloudOps dashboard requires the Cognito and API values generated by Terraform; configure them only in the ignored local `.env` file or through `deploy-frontend.sh`.
-
----
-
-## Step-by-Step Deployment
-
-### Step 1: Initialise Terraform
-
-```bash
-terraform -chdir=terraform init
-```
-
-### Step 2: Preview the Plan
-
-```bash
-# Without email alerts
-terraform -chdir=terraform plan
-
-# With email alerts
-terraform -chdir=terraform plan -var="alert_email=your-email@example.com"
-```
-
-### Step 3: Deploy the Stack
-
-```bash
-# Without email alerts
-terraform -chdir=terraform apply
-
-# With email alerts (recommended)
-terraform -chdir=terraform apply -var="alert_email=your-email@example.com"
-```
-
-Review the full plan before applying and type `yes` only after you confirm the resources and estimated costs. EC2 initialization and CloudFront distribution readiness may take longer than a few minutes.
-
-> **📧 Important:** If you provided an email, check your inbox for **two** SNS subscription confirmation emails (one for remediation alerts, one for ops alerts). **You must click "Confirm subscription"** in both emails to receive notifications.
-
-### Step 4: Verify the Deployment
-
-Wait for EC2 user data to finish and for the CloudFront distribution to become ready.
-
-```bash
-# 1. Check nginx is running
-curl "$(terraform -chdir=terraform output -raw cloudfront_domain)"
-
-# 2. Verify SSM registration
-aws ssm describe-instance-information \
-  --filters "Key=InstanceIds,Values=$(terraform -chdir=terraform output -raw ec2_instance_id)" \
-  --query "InstanceInformationList[0].PingStatus"
-# Expected: "Online"
-
-# 3. Check the configured alarms
-aws cloudwatch describe-alarms \
-  --alarm-name-prefix "self-healing" \
-  --query "MetricAlarms[].{Name:AlarmName, State:StateValue}" \
-  --output table
-```
-
-### Step 5: Deploy the React Frontend
-
-The infrastructure is ready. Now build and deploy the React CloudOps Dashboard to the EC2 instance using the automated script:
-
-```bash
-bash ./deploy-frontend.sh
-```
-
-Wait for the script to say `Deployment successful!`. Then:
-
-```bash
-# Open the CloudFront HTTPS URL in your browser
-terraform -chdir=terraform output -raw cloudfront_domain
-```
-
-### Step 6: Explore the CloudWatch Dashboard
-
-```bash
-terraform -chdir=terraform output -raw dashboard_url
-```
-
----
-
-## Testing the Self-Healing Loop
-
-### Method 1: CPU Spike via SSM (Full End-to-End Test)
-
-```bash
-# Trigger 95% CPU for 10 minutes
-aws ssm send-command \
-  --instance-ids "$(terraform -chdir=terraform output -raw ec2_instance_id)" \
-  --document-name "AWS-RunShellScript" \
-  --parameters 'commands=["stress-ng --cpu 1 --cpu-load 95 --timeout 600s &"]' \
-  --comment "Test: trigger CPU spike"
-```
-
-The alarm takes **5–10 minutes** to fire (300s evaluation period with basic monitoring).
-
-```bash
-# Monitor alarm state
-watch -n 60 'aws cloudwatch describe-alarms \
-  --alarm-names "self-healing-high-cpu" \
-  --query "MetricAlarms[0].StateValue" \
-  --output text'
-```
-
-### Method 2: Direct Lambda Invocation (Instant Test)
-
-```bash
-INSTANCE_ID=$(terraform -chdir=terraform output -raw ec2_instance_id)
-
-aws lambda invoke \
-  --function-name "self-healing-remediation" \
-  --cli-binary-format raw-in-base64-out \
-  --payload "{
-    \"Records\": [{
-      \"Sns\": {
-        \"Message\": \"{\\\"AlarmName\\\":\\\"self-healing-high-cpu\\\",\\\"NewStateValue\\\":\\\"ALARM\\\",\\\"NewStateReason\\\":\\\"Manual test\\\",\\\"Trigger\\\":{\\\"Dimensions\\\":[{\\\"name\\\":\\\"InstanceId\\\",\\\"value\\\":\\\"${INSTANCE_ID}\\\"}]}}\"
-      }
-    }]
-  }" \
-  /dev/stdout
-```
-
-### Verifying Results
-
-```bash
-# 1. Check Lambda logs
-aws logs tail "/aws/lambda/self-healing-remediation" --since 30m
-
-# 2. List remediation audit logs
-aws s3 ls "s3://$(terraform -chdir=terraform output -raw s3_audit_bucket)/remediation-logs/"
-
-# 3. List lifecycle audit logs
-aws s3 ls "s3://$(terraform -chdir=terraform output -raw s3_audit_bucket)/lifecycle-logs/"
-
-# 4. Read the latest remediation log
-LATEST=$(aws s3 ls "s3://$(terraform -chdir=terraform output -raw s3_audit_bucket)/remediation-logs/" \
-  --recursive | sort | tail -1 | awk '{print $4}')
-aws s3 cp "s3://$(terraform -chdir=terraform output -raw s3_audit_bucket)/$LATEST" -
-```
-
-### Stopping the Stress Test
-
-```bash
-aws ssm send-command \
-  --instance-ids "$(terraform -chdir=terraform output -raw ec2_instance_id)" \
-  --document-name "AWS-RunShellScript" \
-  --parameters 'commands=["pkill -f stress-ng"]' \
-  --comment "Stop stress test"
-```
-
----
-
-## Cost and Free Tier Notes
-
-The default configuration uses one `t3.micro` EC2 instance, an 8 GB `gp3` volume, Lambda, S3, DynamoDB, CloudWatch, SNS, EventBridge, Cognito, and CloudFront. Eligibility and pricing vary by account, region, and date; CloudFront and other resources may incur charges. Check the current AWS pricing and your account's Free Tier or credits before deployment, and set an AWS Budget alert. Do not assume this stack is free.
-
----
-
-## Cleanup
-
-```bash
-terraform -chdir=terraform destroy
-```
-
-Type `yes` when prompted. All resources including the S3 bucket (via `force_destroy = true`) will be removed.
-
----
-
-## Customisation
-
-```bash
-# Use a different region
-terraform -chdir=terraform apply -var="aws_region=eu-west-1"
-
-# Lower the CPU threshold
-terraform -chdir=terraform apply -var="cpu_threshold=50"
-
-# Select an instance type supported in the chosen region
-terraform -chdir=terraform apply -var="instance_type=t3.micro"
-
-# Add email alerts
-terraform -chdir=terraform apply -var="alert_email=ops-team@example.com"
-```
+Do not use the old single-origin deployment instructions until the independent S3 and CloudFront origins are implemented and reviewed. No real payment data should be collected by this demo.

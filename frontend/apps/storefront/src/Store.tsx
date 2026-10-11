@@ -27,9 +27,9 @@ const products: Product[] = [
 const categories = ['All pieces', 'Workspace', 'Accessories', 'Kitchen', 'Paper goods']
 const money = (amount: number) => `$${amount.toFixed(2)}`
 
-type StoreProps = { authEnabled: boolean; isAuthenticated: boolean; userLabel?: string; onSignIn: () => void }
+const cloudOpsUrl = import.meta.env.VITE_CLOUDOPS_URL || 'http://localhost:5174/'
 
-function Store({ authEnabled, isAuthenticated, userLabel, onSignIn }: StoreProps) {
+function Store() {
   const [category, setCategory] = useState('All pieces')
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState<Record<string, number>>({})
@@ -70,10 +70,9 @@ function Store({ authEnabled, isAuthenticated, userLabel, onSignIn }: StoreProps
         <nav className={mobileNav ? 'store-nav is-open' : 'store-nav'} aria-label="Main navigation">
           <a href="#shop" onClick={() => setMobileNav(false)}>Shop</a><a href="#story" onClick={() => setMobileNav(false)}>Our story</a>
           <a href="#footer" onClick={() => setMobileNav(false)}>Journal</a>
-          <button className="store-nav-dashboard" onClick={() => window.dispatchEvent(new Event('open-ops-dashboard'))}>CloudOps dashboard <ArrowRight size={14} /></button>
+          <a className="store-nav-dashboard" href={cloudOpsUrl} target="_blank" rel="noreferrer">CloudOps dashboard <ArrowRight size={14} /></a>
         </nav>
         <div className="store-header-actions">
-          {isAuthenticated ? <span className="store-user">{userLabel || 'Member'}</span> : authEnabled ? <Button variant="ghost" className="store-signin" onClick={onSignIn}>Sign in</Button> : null}
           <Button variant="ghost" className="store-cart-button" onClick={() => setCartOpen(true)} aria-label={`Open cart with ${quantity} items`}><ShoppingBag size={19} /><span>Bag</span><b>{quantity}</b></Button>
         </div>
       </header>
@@ -125,7 +124,7 @@ function Store({ authEnabled, isAuthenticated, userLabel, onSignIn }: StoreProps
         <section className="store-newsletter"><div><span className="store-eyebrow"><span className="store-eyebrow-line" /> GOOD NOTES, OCCASIONALLY</span><h2>A little something<br /><em>for your inbox.</em></h2><p>New pieces, studio stories, and ideas for making the everyday better.</p></div><form onSubmit={(event) => { event.preventDefault(); setNotice('Demo form only. Your email was not saved.'); window.setTimeout(() => setNotice(''), 3500) }}><label htmlFor="store-email">Your email address</label><div><Input id="store-email" type="email" placeholder="you@example.com" required /><Button variant="ghost" size="icon" type="submit" aria-label="Join newsletter"><ArrowRight size={18} /></Button></div><small>Demo form only. Submissions are not stored or sent.</small></form></section>
       </main>
 
-      <footer className="store-footer" id="footer"><a className="store-wordmark" href="#home">fieldwork<span>.</span></a><span>Useful things for everyday living.</span><div><a href="#shop">Shop</a><a href="#story">Our story</a><button onClick={() => window.dispatchEvent(new Event('open-ops-dashboard'))}>CloudOps dashboard</button></div><small>© 2026 Fieldwork Studio · Portfolio demonstration storefront</small></footer>
+      <footer className="store-footer" id="footer"><a className="store-wordmark" href="#home">fieldwork<span>.</span></a><span>Useful things for everyday living.</span><div><a href="#shop">Shop</a><a href="#story">Our story</a><a href={cloudOpsUrl} target="_blank" rel="noreferrer">CloudOps dashboard</a></div><small>© 2026 Fieldwork Studio · Portfolio demonstration storefront</small></footer>
 
       {notice && <div role="status" className="store-toast"><Check size={17} />{notice}</div>}
       {cartOpen && <div className="store-drawer-backdrop" onClick={() => setCartOpen(false)}>
