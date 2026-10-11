@@ -1,13 +1,19 @@
 const puppeteer = require('puppeteer');
 
+const target = process.env.TARGET_URL || 'http://localhost:4173';
+
 (async () => {
-  const browser = await puppeteer.launch({ headless: "new" });
-  const page = await browser.newPage();
-  
-  page.on('console', msg => console.log('PAGE LOG:', msg.text()));
-  page.on('pageerror', err => console.log('PAGE ERROR:', err.message));
-  
-  await page.goto('http://54.173.161.214', { waitUntil: 'networkidle0' });
-  
-  await browser.close();
-})();
+  const browser = await puppeteer.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    page.on('console', (message) => console.log('PAGE LOG:', message.text()));
+    page.on('pageerror', (error) => console.log('PAGE ERROR:', error.message));
+    await page.goto(target, { waitUntil: 'networkidle0', timeout: 30000 });
+    console.log(`Loaded ${target}`);
+  } finally {
+    await browser.close();
+  }
+})().catch((error) => {
+  console.error('Browser check failed:', error.message);
+  process.exitCode = 1;
+});

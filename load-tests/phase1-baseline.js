@@ -11,7 +11,8 @@ import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 
 // ── Configuration ────────────────────────────────────────────
-const TARGET = __ENV.TARGET_URL || 'http://98.91.176.47';
+const TARGET = __ENV.TARGET_URL;
+if (!TARGET) throw new Error('Set TARGET_URL to the HTTPS CloudFront URL for the deployment under test.');
 
 // Custom metrics
 const errorRate = new Rate('errors');

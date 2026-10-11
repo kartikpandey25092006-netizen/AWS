@@ -1,110 +1,66 @@
 # Self-Healing Cloud Infrastructure on AWS
 
-A fully automated self-healing system with multi-layered recovery, operational alerting, lifecycle auditing, and a real-time CloudWatch dashboard — all within AWS Free Tier.
+A portfolio CloudOps project that monitors a single EC2 web server, attempts automated recovery, records operational events, and displays system health in a React dashboard. AWS charges depend on account eligibility, region, usage, and current pricing; review costs before deploying.
+
+The frontend now opens on the **Fieldwork demo storefront** with a static catalog, local cart, and simulated checkout. The existing operator dashboard remains accessible from Store navigation. No commerce API, persistent order storage, inventory system, real payment, or email-list storage is implemented.
 
 ## Architecture
 
-```
-                         ┌─────────────────────────────────────────┐
-                         │          SELF-HEALING LOOPS             │
-                         └─────────────────────────────────────────┘
-
-  LOOP 1: Service Recovery (High CPU → Restart nginx)
-  ───────────────────────────────────────────────────
-  ┌──────────────┐   CPUUtilization > 75%    ┌─────────────────┐
-  │  EC2 Instance │──── CloudWatch Alarm ────▶│   SNS Topic     │──── Email Alert
-  │  (t2.micro)  │                           └────────┬────────┘
-  │  nginx + SSM │                                    │
-  └──────▲───────┘                                    ▼
-         │                                   ┌─────────────────┐
-         │  SSM: systemctl restart nginx     │  Lambda Function │
-         └───────────────────────────────────│  (Python 3.12)  │
-                                             └────────┬────────┘
-                                                      │
-                                             ┌────────▼────────┐
-                                             │   S3 Bucket     │
-                                             │  (Audit Logs)   │
-                                             │  + Versioning   │
-                                             └─────────────────┘
-
-  LOOP 2: Hardware Recovery (System Status Check → Auto Recovery)
-  ──────────────────────────────────────────────────────────────
-  ┌──────────────┐  StatusCheckFailed_System  ┌─────────────────┐
-  │  EC2 Instance │──── CloudWatch Alarm ─────▶│  EC2 Auto       │
-  │  (t2.micro)  │                            │  Recover Action  │
-  └──────▲───────┘                            └────────┬────────┘
-         └─────────────────────────────────────────────┘
-         (Preserves: Instance ID, IPs, EBS volumes)
-
-  LOOP 3: OS Recovery (Instance Status Check → Auto Reboot)
-  ────────────────────────────────────────────────────────
-  ┌──────────────┐  StatusCheckFailed_Instance ┌────────────────┐
-  │  EC2 Instance │──── CloudWatch Alarm ──────▶│  EC2 Auto      │
-  │  (t2.micro)  │                             │  Reboot Action  │
-  └──────▲───────┘                             └───────┬────────┘
-         └─────────────────────────────────────────────┘
-
-  OBSERVABILITY: EventBridge → Lambda → S3 Lifecycle Logs
-  ──────────────────────────────────────────────────────
-  ┌──────────────┐  State Change Event   ┌──────────────┐   ┌────────────┐
-  │  EC2 Instance │─── EventBridge ──────▶│    Lambda    │──▶│  S3 Bucket │
-  └──────────────┘  (start/stop/reboot)  └──────────────┘   └────────────┘
-
-  FRONTEND: React Dashboard via S3 & SSM
-  ──────────────────────────────────────────────────────
-  ┌──────────────┐    S3 Sync   ┌────────────────┐   
-  │  S3 Bucket   │◀─────────────│  EC2 Instance  │   
-  │ (React Build)│              │  Nginx Server  │   
-  └──────────────┘              └────────────────┘   
-```
+1. CloudWatch CPU and memory alarms publish to SNS. SNS invokes a Lambda that uses SSM to restart Nginx and writes audit records.
+2. An EventBridge Health Manager schedule checks the EC2 status and `/health` endpoint, then can reboot EC2 or restart Nginx.
+3. A separate scheduled Lambda analyzes CPU and memory trends and can send Discord pre-alerts when configured.
+4. EventBridge records EC2 state changes. DynamoDB holds audit/state records, and S3 stores audit objects and frontend build assets.
+5. API Gateway protects the dashboard API routes with Cognito JWT authorization. CloudFront serves the frontend over viewer HTTPS; its current EC2 origin connection is HTTP.
 
 ## Features Summary
 
 | # | Feature | Description |
 |---|---------|-------------|
-| 1 | **CPU Self-Healing** | CloudWatch alarm → SNS → Lambda → SSM restart nginx |
-| 2 | **EC2 Auto Recovery** | Hardware failure → automatic instance migration |
-| 3 | **Instance Health Check** | OS-level failure → automatic reboot |
-| 4 | **SNS Email Alerts** | Email notifications on alarms and remediation |
-| 5 | **Lambda Error Alarm** | Detects if the self-healing mechanism itself fails |
-| 6 | **CloudWatch Dashboard** | Single-pane-of-glass for CPU, health, Lambda metrics, alarm states |
-| 7 | **S3 Bucket Versioning** | Protects audit logs from accidental overwrites |
-| 8 | **EventBridge Lifecycle Logging** | Captures all EC2 state changes to S3 audit trail |
-| 9 | **IAM Least Privilege** | Every role is scoped to specific resources |
+| 1 | **Service Recovery** | CPU or memory alarm → SNS → Lambda → SSM Nginx restart |
+| 2 | **Periodic Health Checks** | EventBridge → Health Manager → EC2 reboot or Nginx restart |
+| 3 | **Trend Pre-Alerts** | Scheduled predictor can notify Discord when configured |
+| 4 | **Cognito Sign-In** | API Gateway requires a Cognito JWT for dashboard routes |
+| 5 | **CloudOps Dashboard** | React dashboard polls API metrics, state, and audit events |
+| 6 | **Operational Records** | DynamoDB state/audit data and versioned S3 audit objects |
+| 7 | **HTTPS Delivery** | CloudFront redirects viewer requests to HTTPS; origin remains HTTP |
+| 8 | **Portfolio Storefront** | Static catalog, search, browser-local cart, and simulated checkout |
 
 ## Prerequisites
 
-1. **AWS Account** with Free Tier eligibility
-2. **AWS CLI v2** installed (`brew install awscli` on Mac) and configured (`aws configure`)
-3. **Terraform >= 1.5** installed (`brew install terraform` on Mac)
-4. **Default VPC** must exist in the target region
+1. **AWS Account** and an AWS CLI profile with permissions for the resources in Terraform. Charges may apply.
+2. **AWS CLI v2** installed and signed in, for example with `aws login --region us-east-1 --profile your-profile-name`.
+3. **Terraform >= 1.5** installed.
+4. **Node.js and npm** installed to build the frontend.
+5. A **default VPC** in the target region.
+6. The S3 bucket and DynamoDB table named in the Terraform backend must already exist before `terraform init`.
 
 ```bash
 aws --version                   # Verify AWS CLI installation
-aws sts get-caller-identity     # Verify credentials
-terraform --version              # Verify Terraform >= 1.5
+aws sts get-caller-identity --profile your-profile-name # Verify credentials
+terraform --version                                # Verify Terraform >= 1.5
 ```
+
+The frontend deployment script and several examples use the AWS CLI's default profile. Set `AWS_PROFILE` to the profile you intend to use before running them. In PowerShell, use `$env:AWS_PROFILE = "your-profile-name"`; in Bash, use `export AWS_PROFILE=your-profile-name`.
 
 ## Project Structure
 
 ```
-AWS/
+CloudOps/
 ├── lambda/
-│   └── main.py              # Lambda: remediation + lifecycle logger
+│   ├── api.py               # Dashboard API and health score
+│   ├── main.py              # Remediation + lifecycle logger
+│   ├── health_manager.py    # Periodic health checks and recovery
+│   └── predictor.py         # Trend analysis and optional Discord alerts
 ├── terraform/
-│   ├── main.tf              # Provider, data sources
+│   ├── main.tf              # Backend, provider, data sources
 │   ├── variables.tf         # Configurable inputs
-│   ├── s3.tf                # Audit bucket + versioning
-│   ├── iam.tf               # EC2 + Lambda IAM roles
-│   ├── ec2.tf               # Security group + EC2 instance
-│   ├── monitoring.tf        # 4 CloudWatch alarms + 2 SNS topics
-│   ├── lambda.tf            # Lambda function + SNS subscription
-│   ├── dashboard.tf         # CloudWatch dashboard
-│   ├── eventbridge.tf       # EC2 state change rule
-│   └── outputs.tf           # All resource IDs & test commands
-├── docs/                    # Project Context & Architecture Docs
-├── RULES.md                 # AI Development Rules
-├── TASKS.md                 # Prioritized Backlog
+│   ├── api.tf, cognito.tf   # HTTP API and JWT sign-in
+│   ├── ec2.tf, iam.tf       # Web host and roles
+│   ├── lambda.tf            # Lambda functions
+│   └── monitoring.tf, eventbridge.tf, dashboard.tf
+├── frontend/                # React/Vite storefront and CloudOps dashboard
+├── docs/                    # Architecture, security, test plan, roadmap
+├── TASKS.md                 # Prioritized work backlog
 └── README.md
 ```
 
@@ -116,6 +72,18 @@ For an in-depth understanding of the architecture, design, security, and future 
 - [TEST_PLAN.md](./docs/TEST_PLAN.md)
 - [DECISIONS.md](./docs/DECISIONS.md)
 - [MEMORY.md](./docs/MEMORY.md)
+- [PRODUCT_ROADMAP.md](./docs/PRODUCT_ROADMAP.md)
+- [AWS_CONSOLE_BATCHES.md](./docs/AWS_CONSOLE_BATCHES.md)
+
+## Run the Portfolio UI Locally
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Open the Vite URL shown in the terminal (default `http://localhost:5173`). The Fieldwork storefront works with static demo data. The CloudOps dashboard requires the Cognito and API values generated by Terraform; configure them only in the ignored local `.env` file or through `deploy-frontend.sh`.
 
 ---
 
@@ -124,49 +92,48 @@ For an in-depth understanding of the architecture, design, security, and future 
 ### Step 1: Initialise Terraform
 
 ```bash
-cd AWS/terraform
-terraform init
+terraform -chdir=terraform init
 ```
 
 ### Step 2: Preview the Plan
 
 ```bash
 # Without email alerts
-terraform plan
+terraform -chdir=terraform plan
 
 # With email alerts
-terraform plan -var="alert_email=your-email@example.com"
+terraform -chdir=terraform plan -var="alert_email=your-email@example.com"
 ```
 
 ### Step 3: Deploy the Stack
 
 ```bash
 # Without email alerts
-terraform apply
+terraform -chdir=terraform apply
 
 # With email alerts (recommended)
-terraform apply -var="alert_email=your-email@example.com"
+terraform -chdir=terraform apply -var="alert_email=your-email@example.com"
 ```
 
-Type `yes` when prompted. Deployment takes ~2–3 minutes.
+Review the full plan before applying and type `yes` only after you confirm the resources and estimated costs. EC2 initialization and CloudFront distribution readiness may take longer than a few minutes.
 
 > **📧 Important:** If you provided an email, check your inbox for **two** SNS subscription confirmation emails (one for remediation alerts, one for ops alerts). **You must click "Confirm subscription"** in both emails to receive notifications.
 
 ### Step 4: Verify the Deployment
 
-Wait **~3 minutes** for UserData to finish installing nginx.
+Wait for EC2 user data to finish and for the CloudFront distribution to become ready.
 
 ```bash
 # 1. Check nginx is running
-curl http://$(terraform output -raw ec2_public_ip)
+curl "$(terraform -chdir=terraform output -raw cloudfront_domain)"
 
 # 2. Verify SSM registration
 aws ssm describe-instance-information \
-  --filters "Key=InstanceIds,Values=$(terraform output -raw ec2_instance_id)" \
+  --filters "Key=InstanceIds,Values=$(terraform -chdir=terraform output -raw ec2_instance_id)" \
   --query "InstanceInformationList[0].PingStatus"
 # Expected: "Online"
 
-# 3. Check all 4 alarms exist
+# 3. Check the configured alarms
 aws cloudwatch describe-alarms \
   --alarm-name-prefix "self-healing" \
   --query "MetricAlarms[].{Name:AlarmName, State:StateValue}" \
@@ -178,21 +145,20 @@ aws cloudwatch describe-alarms \
 The infrastructure is ready. Now build and deploy the React CloudOps Dashboard to the EC2 instance using the automated script:
 
 ```bash
-cd AWS
-./deploy-frontend.sh
+bash ./deploy-frontend.sh
 ```
 
 Wait for the script to say `Deployment successful!`. Then:
 
 ```bash
-# Open the dashboard in your browser
-echo "http://$(cd terraform && terraform output -raw ec2_public_ip)"
+# Open the CloudFront HTTPS URL in your browser
+terraform -chdir=terraform output -raw cloudfront_domain
 ```
 
 ### Step 6: Explore the CloudWatch Dashboard
 
 ```bash
-echo "Dashboard: $(cd terraform && terraform output -raw dashboard_url)"
+terraform -chdir=terraform output -raw dashboard_url
 ```
 
 ---
@@ -204,7 +170,7 @@ echo "Dashboard: $(cd terraform && terraform output -raw dashboard_url)"
 ```bash
 # Trigger 95% CPU for 10 minutes
 aws ssm send-command \
-  --instance-ids "$(terraform output -raw ec2_instance_id)" \
+  --instance-ids "$(terraform -chdir=terraform output -raw ec2_instance_id)" \
   --document-name "AWS-RunShellScript" \
   --parameters 'commands=["stress-ng --cpu 1 --cpu-load 95 --timeout 600s &"]' \
   --comment "Test: trigger CPU spike"
@@ -223,7 +189,7 @@ watch -n 60 'aws cloudwatch describe-alarms \
 ### Method 2: Direct Lambda Invocation (Instant Test)
 
 ```bash
-INSTANCE_ID=$(terraform output -raw ec2_instance_id)
+INSTANCE_ID=$(terraform -chdir=terraform output -raw ec2_instance_id)
 
 aws lambda invoke \
   --function-name "self-healing-remediation" \
@@ -245,22 +211,22 @@ aws lambda invoke \
 aws logs tail "/aws/lambda/self-healing-remediation" --since 30m
 
 # 2. List remediation audit logs
-aws s3 ls "s3://$(terraform output -raw s3_audit_bucket)/remediation-logs/"
+aws s3 ls "s3://$(terraform -chdir=terraform output -raw s3_audit_bucket)/remediation-logs/"
 
 # 3. List lifecycle audit logs
-aws s3 ls "s3://$(terraform output -raw s3_audit_bucket)/lifecycle-logs/"
+aws s3 ls "s3://$(terraform -chdir=terraform output -raw s3_audit_bucket)/lifecycle-logs/"
 
 # 4. Read the latest remediation log
-LATEST=$(aws s3 ls "s3://$(terraform output -raw s3_audit_bucket)/remediation-logs/" \
+LATEST=$(aws s3 ls "s3://$(terraform -chdir=terraform output -raw s3_audit_bucket)/remediation-logs/" \
   --recursive | sort | tail -1 | awk '{print $4}')
-aws s3 cp "s3://$(terraform output -raw s3_audit_bucket)/$LATEST" -
+aws s3 cp "s3://$(terraform -chdir=terraform output -raw s3_audit_bucket)/$LATEST" -
 ```
 
 ### Stopping the Stress Test
 
 ```bash
 aws ssm send-command \
-  --instance-ids "$(terraform output -raw ec2_instance_id)" \
+  --instance-ids "$(terraform -chdir=terraform output -raw ec2_instance_id)" \
   --document-name "AWS-RunShellScript" \
   --parameters 'commands=["pkill -f stress-ng"]' \
   --comment "Stop stress test"
@@ -268,32 +234,16 @@ aws ssm send-command \
 
 ---
 
-## Free Tier Compliance
+## Cost and Free Tier Notes
 
-| Resource              | Free Tier Limit              | This Stack Uses              |
-|-----------------------|------------------------------|------------------------------|
-| EC2 (t2.micro)        | 750 hours/month              | 1 instance                   |
-| EBS (gp3)             | 30 GB/month                  | 8 GB                         |
-| S3 Storage            | 5 GB                         | ~500 KB (Logs + React app)   |
-| S3 Requests           | 2,000 PUT / 20,000 GET       | Minimal                      |
-| Lambda                | 1M requests + 400K GB-s      | < 100 invocations            |
-| CloudWatch Alarms     | 10 standard alarms           | 4 alarms                     |
-| CloudWatch Dashboard  | 3 dashboards                 | 1 dashboard                  |
-| CloudWatch Logs       | 5 GB ingestion               | < 1 MB                       |
-| SNS                   | 1M publishes                 | < 100                        |
-| SNS Email             | Unlimited                    | Minimal                      |
-| SSM (RunCommand)      | Free                         | Minimal                      |
-| EventBridge           | Free (default bus)           | Minimal                      |
-
-> **⚠️ Important:** The Free Tier for EC2 is 750 hours/month. Running 1 instance for a full month uses ~720 hours — well within the limit. Do **not** launch additional instances.
+The default configuration uses one `t3.micro` EC2 instance, an 8 GB `gp3` volume, Lambda, S3, DynamoDB, CloudWatch, SNS, EventBridge, Cognito, and CloudFront. Eligibility and pricing vary by account, region, and date; CloudFront and other resources may incur charges. Check the current AWS pricing and your account's Free Tier or credits before deployment, and set an AWS Budget alert. Do not assume this stack is free.
 
 ---
 
 ## Cleanup
 
 ```bash
-cd AWS/terraform
-terraform destroy
+terraform -chdir=terraform destroy
 ```
 
 Type `yes` when prompted. All resources including the S3 bucket (via `force_destroy = true`) will be removed.
@@ -304,14 +254,14 @@ Type `yes` when prompted. All resources including the S3 bucket (via `force_dest
 
 ```bash
 # Use a different region
-terraform apply -var="aws_region=eu-west-1"
+terraform -chdir=terraform apply -var="aws_region=eu-west-1"
 
 # Lower the CPU threshold
-terraform apply -var="cpu_threshold=50"
+terraform -chdir=terraform apply -var="cpu_threshold=50"
 
-# Use t3.micro instead
-terraform apply -var="instance_type=t3.micro"
+# Select an instance type supported in the chosen region
+terraform -chdir=terraform apply -var="instance_type=t3.micro"
 
 # Add email alerts
-terraform apply -var="alert_email=ops-team@example.com"
+terraform -chdir=terraform apply -var="alert_email=ops-team@example.com"
 ```

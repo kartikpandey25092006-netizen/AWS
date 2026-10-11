@@ -1,42 +1,38 @@
 # Self-Healing Cloud Infrastructure on AWS
-**Project Pitch**
 
----
+## Project pitch
 
-## 1. Introduction & Problem Statement
-Modern cloud applications are expected to be highly available, yet hardware failures, OS panics, and unexpected resource spikes (like CPU or memory exhaustion) are inevitable. Manually responding to these incidents leads to high MTTR (Mean Time To Recovery) and potential application downtime. 
+### Problem
 
-## 2. Project Objective
-The objective of this project is to design and implement a **fully automated, multi-layered self-healing architecture** on AWS. It demonstrates how cloud-native observability and automation can detect, alert, and resolve different classes of failures without human intervention, all while remaining 100% within the AWS Free Tier limits.
+Small web services can become unavailable because of high resource usage, host health problems, or a failed web process. Manual response takes time and can be hard to demonstrate or audit.
 
-## 3. Architecture & Self-Healing Loops
-The system is built upon three core self-healing loops to address failures at different levels of the stack:
+### Objective
 
-* **Loop 1: Service Recovery (Application Level)**
-  CloudWatch alarms monitor CPU and Memory. If utilization exceeds the threshold (e.g., 85%), an alert is sent via SNS, which triggers an AWS Lambda function. The Lambda function uses AWS Systems Manager (SSM) to automatically restart the struggling service, restoring application health.
-  
-* **Loop 2: OS Recovery (Instance Level)**
-  If the underlying operating system becomes unresponsive (Instance Status Check Failure), a CloudWatch alarm triggers an EC2 Auto-Reboot action to recover the OS automatically.
-  
-* **Loop 3: Hardware Recovery (Infrastructure Level)**
-  In the event of underlying AWS hardware failure (System Status Check Failure), an EC2 Auto-Recovery action is triggered. This migrates the instance to healthy hardware while preserving its IP address, Instance ID, and attached EBS volumes.
+Build a portfolio system that monitors a web service, attempts defined recovery actions, records those actions, and gives an operator a dashboard to inspect service health. It demonstrates cloud operations and SRE ideas without claiming that automated recovery guarantees availability.
 
-## 4. Key Features & Technologies
-* **Infrastructure as Code (IaC):** The entire stack is provisioned using Terraform, ensuring reproducibility, version control, and consistency.
-* **Real-time Observability:** A custom CloudWatch Dashboard provides a single-pane-of-glass view for metrics (CPU, Memory), Alarm States, and Lambda execution metrics.
-* **Audit & Compliance:** AWS EventBridge captures all EC2 state changes (Start/Stop/Reboot) and triggers a Lambda function to log lifecycle events into an Amazon S3 bucket with versioning enabled, ensuring a tamper-proof audit trail.
-* **CloudOps Dashboard:** A React-based frontend deployed on the EC2 instance visualizes real-time health data and metrics.
-* **Discord ChatOps Integration:** A custom webhooks integration that instantly notifies the engineering team in a Discord channel whenever the self-healing system triggers an automated recovery action.
-* **Production-Grade Infrastructure-as-Code (IaC):** Configured Terraform Remote State with **Amazon S3** (versioned state storage) and **Amazon DynamoDB** (distributed state locking), ensuring concurrency safety and CI/CD readiness.
-* **Automated SRE Incident Post-Mortems:** Upon every recovery event, the system automatically calculates MTTD/MTTR reliability metrics, generates a Markdown Root Cause Analysis (RCA) report, stores it in S3, and links it in Discord.
-* **Custom Composite Health Score Engine (0–100):** A fully custom-built Python algorithm that normalises CPU utilisation, Memory utilisation, Uptime Stability, Metric Volatility (standard deviation), and Healing State into a single weighted composite "Infrastructure Health Score" with letter grading (A–F). This feature does not exist in AWS — it was engineered from scratch.
-* **Predictive Failure Detection (Linear Regression ML):** A custom Lambda function runs every 5 minutes, fetches the last 30 minutes of CPU & Memory time-series data, applies a least-squares linear regression algorithm to calculate the trend slope, R² coefficient, and extrapolates 10 minutes into the future. If a threshold breach is predicted, it sends a **Pre-Alert** to Discord *before* the CloudWatch alarm fires — reducing Mean Time to Detect (MTTD) to near-zero.
+### How the system works
 
-## 5. Cost & Efficiency (Free Tier Compliance)
-The architecture is meticulously designed to incur zero costs by operating entirely within the AWS Free Tier:
-* **Compute:** 1x t2.micro EC2 Instance (Well within the 750 hours/month limit)
-* **Storage:** 8 GB gp3 EBS Volume (Limit is 30 GB/month) + Minimal S3 Storage
-* **Automation:** AWS Lambda & SNS (Expected usage is < 100 requests/month, limit is 1 Million)
+- CloudWatch monitors CPU, memory, and EC2 health checks.
+- CPU and memory alarms publish to SNS, which invokes a Lambda function. The Lambda sends an SSM command to restart Nginx and records the outcome.
+- An EventBridge Health Manager runs every minute, checks EC2 status and the service `/health` endpoint, and can attempt a reboot or Nginx restart.
+- A separate predictor runs every five minutes, evaluates recent CPU/memory trends, and can send a Discord pre-alert if configured. Its forecast is heuristic.
+- EventBridge captures EC2 state changes. DynamoDB stores operational state and audit events; S3 stores audit objects and staged frontend assets.
+- Cognito authenticates dashboard users. API Gateway uses a JWT authorizer for its status and maintenance routes.
+- React displays the current metrics, recovery state, audit trail, and maintenance control. CloudFront redirects viewer traffic to HTTPS; its current origin connection to EC2 is HTTP.
+- The same frontend includes a Fieldwork demo storefront with a static catalog, search, filters, browser-local cart, and simulated checkout. CloudOps remains a separate operator view.
 
-## 6. Conclusion
-This project practically demonstrates the principles of **Site Reliability Engineering (SRE)** and **Cloud Operations**. It goes beyond a standard web deployment by engineering a resilient system capable of surviving and self-correcting common cloud failures, serving as a comprehensive showcase of cloud-native fault tolerance and automation.
+### Portfolio value
+
+The project shows infrastructure as code with Terraform, event-driven automation, operational auditing, and a React experience for both visitors and operators. The storefront is currently a UI demonstration only; a persistent commerce backend is future work. See `docs/PRODUCT_ROADMAP.md`.
+
+### Cost and limits
+
+This is a single-instance demonstration, not a production availability design. Costs depend on account eligibility, region, resource usage, and current AWS pricing. Review a Terraform plan and cost estimate, set a budget alert, and clean up resources after the demo. Do not present the project as guaranteed to fit the Free Tier.
+
+### Demo flow
+
+1. Browse the Fieldwork catalog, filter/search products, add an item to the cart, and place a clearly labeled demo order.
+2. Open the CloudOps dashboard and sign in through Cognito.
+3. Review CPU, memory, overall health score, and audit panels.
+4. In a test environment, trigger a controlled workload and observe alarm evaluation and the recorded recovery attempt.
+5. Explain limits: no real payment or persisted order, one EC2 origin, HTTP from CloudFront to origin, and heuristic prediction.

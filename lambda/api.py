@@ -21,9 +21,31 @@ def handler(event, context):
     print(f"Received API request: {method} {raw_path}")
 
     try:
-        if raw_path == "/api/maintenance" and method == "POST":
-            body = json.loads(event.get("body", "{}"))
-            maintenance_mode = body.get("maintenance", False)
+        if raw_path == "/api/maintenance":
+            if method != "POST":
+                return {
+                    "statusCode": 405,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({"error": "Method not allowed."}),
+                }
+
+            try:
+                body = json.loads(event.get("body") or "")
+            except (TypeError, json.JSONDecodeError):
+                return {
+                    "statusCode": 400,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({"error": "Request body must be valid JSON."}),
+                }
+
+            if not isinstance(body, dict) or not isinstance(body.get("maintenance"), bool):
+                return {
+                    "statusCode": 400,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({"error": "The 'maintenance' field must be a boolean."}),
+                }
+
+            maintenance_mode = body["maintenance"]
 
             alarms = cloudwatch.describe_alarms(AlarmNamePrefix="self-healing")["MetricAlarms"]
             alarm_names = [a["AlarmName"] for a in alarms]
@@ -40,7 +62,22 @@ def handler(event, context):
                 "body": json.dumps({"success": True, "maintenance": maintenance_mode, "alarms_updated": len(alarm_names)})
             }
 
-        else: # GET /api/status
+        if raw_path != "/api/status":
+            return {
+                "statusCode": 404,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Not found."}),
+            }
+
+        if method != "GET":
+            return {
+                "statusCode": 405,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Method not allowed."}),
+            }
+
+        # GET /api/status
+        else:
             time_range = event.get("queryStringParameters", {}).get("time_range", "40m") if event.get("queryStringParameters") else "40m"
 
             uptime_seconds = get_uptime(INSTANCE_ID)
@@ -88,7 +125,7 @@ def handler(event, context):
             "headers": {
                 "Content-Type": "application/json"
             },
-            "body": json.dumps({"error": str(e)})
+            "body": json.dumps({"error": "The request could not be completed."})
         }
 
 
@@ -207,7 +244,7 @@ def get_memory_metrics(instance_id, time_range="40m"):
         history = history[-num_points:]
         
         current_memory = history[-1]["memory"] if history else 0
-        is_memory_simulating = current_memory > 85.0
+        is_memory_simulating = current_memory > 60.0
         
         return history, current_memory, is_memory_simulating
     except Exception as e:

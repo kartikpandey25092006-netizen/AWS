@@ -2,7 +2,7 @@
 
 ## Overview
 
-A phased load-testing plan to validate the self-healing capabilities of your AWS CloudOps infrastructure. This plan tests your EC2 instance (t3.micro running Nginx), CloudWatch alarms (75% CPU threshold), Lambda remediation, and the full recovery pipeline.
+A staged portfolio load-test plan for a user-owned AWS demo deployment. It uses the current Terraform outputs and should only run against an environment you control after checking the estimated load and cost.
 
 ---
 
@@ -10,12 +10,12 @@ A phased load-testing plan to validate the self-healing capabilities of your AWS
 
 | Parameter | Value |
 |---|---|
-| **Target** | EC2 `t3.micro` (`i-04e616740255f0eb1`) at `98.91.176.47` |
+| **Target** | Set `TARGET_URL` to the current CloudFront URL from Terraform output `cloudfront_domain` |
 | **Application** | Nginx serving static React frontend |
 | **Self-Healing Trigger** | CloudWatch alarm at CPU > 75% for 5 min |
 | **Recovery Action** | Lambda → SSM → `systemctl restart nginx` |
 | **Monitoring** | CloudWatch metrics + React CloudOps Dashboard |
-| **Load Generator** | Your local Mac (via scripts in this directory) |
+| **Load Generator** | A local machine with k6 and AWS CLI configured |
 
 ---
 
@@ -54,15 +54,15 @@ A phased load-testing plan to validate the self-healing capabilities of your AWS
 - Confirm instance stays healthy
 
 ### Phase 2: Scaling Test (Ramp)
-**Goal**: Find the breaking point where CPU crosses 75%.
-- Ramp from 10 → 500 virtual users over 5 minutes
-- Hold at peak for 5 minutes
+**Goal**: Observe modest, controlled load against the demo endpoint.
+- Default ramp is capped at 25 virtual users; configure `MAX_VUS` from 5 to 100 only after reviewing the impact.
+- Stop the run if latency, errors, or account cost rises unexpectedly.
 - Monitor CloudWatch alarm state
 
 ### Phase 3: Stress Test (Self-Healing Validation)
-**Goal**: Trigger the full self-healing pipeline and measure recovery.
-- Use `stress-ng` on-server to guarantee CPU > 95%
-- Simultaneously flood with HTTP traffic
+**Goal**: Trigger the CPU alarm and observe the configured recovery path.
+- Use the script's bounded `stress-ng` run on the test instance.
+- This phase does not generate simultaneous HTTP traffic.
 - Verify: Alarm fires → Lambda triggers → Nginx restarts → Health recovers
 - Measure total recovery time (MTTR)
 
@@ -71,10 +71,40 @@ A phased load-testing plan to validate the self-healing capabilities of your AWS
 ## Constraints & Safety
 
 > [!WARNING]
-> - **t3.micro has CPU credits**. Sustained load will consume burst credits, then throttle to baseline (10% of a vCPU). This is by design for Free Tier.
+> - Load may affect performance, consume burst capacity, trigger recovery, and incur charges. Pricing and eligibility depend on the account, region, date, and usage. Do not assume tests are free.
 > - **Do NOT run `while true; do curl & done`** — this forks thousands of processes on YOUR Mac and can freeze it.
-> - All tests have explicit duration limits.
-> - Cost impact: Negligible (within Free Tier).
+> - Phase 3 is capped at 600 seconds and attempts to stop `stress-ng` when the script exits.
+> - Keep AWS credentials in your configured AWS profile; never put credentials in test scripts.
+
+## Running a phase
+
+From the repository root in a Bash-compatible terminal, set the AWS profile and region you intend to use, then set the deployed CloudFront URL:
+
+```bash
+export AWS_PROFILE=codex-kartik
+export AWS_REGION=us-east-1
+export TARGET_URL="$(terraform -chdir=terraform output -raw cloudfront_domain)"
+```
+
+Run Phase 1 first:
+
+```bash
+k6 run -e TARGET_URL="$TARGET_URL" load-tests/phase1-baseline.js
+```
+
+Only after reviewing Phase 1 results, run the conservative ramp:
+
+```bash
+k6 run -e TARGET_URL="$TARGET_URL" -e MAX_VUS=25 load-tests/phase2-ramp.js
+```
+
+Run Phase 3 only when you are prepared for a CPU alarm and recovery action:
+
+```bash
+bash load-tests/phase3-stress.sh --cpu-load 95 --duration 360
+```
+
+The scripts use AWS CLI credentials for AWS operations. Review the current Terraform outputs and account before running them; do not use the old instance identifiers or IP addresses from previous reports.
 
 ---
 

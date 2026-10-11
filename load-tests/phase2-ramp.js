@@ -12,7 +12,12 @@ import { check, sleep } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
 
 // ── Configuration ────────────────────────────────────────────
-const TARGET = __ENV.TARGET_URL || 'http://98.91.176.47';
+const TARGET = __ENV.TARGET_URL;
+if (!TARGET) throw new Error('Set TARGET_URL to the HTTPS CloudFront URL for the deployment under test.');
+const MAX_VUS = Number(__ENV.MAX_VUS || 25);
+if (!Number.isInteger(MAX_VUS) || MAX_VUS < 5 || MAX_VUS > 100) {
+  throw new Error('MAX_VUS must be an integer between 5 and 100.');
+}
 
 // Custom metrics
 const errorRate = new Rate('errors');
@@ -21,12 +26,10 @@ const timeouts = new Counter('timeouts');
 // ── Test Options ─────────────────────────────────────────────
 export const options = {
   stages: [
-    { duration: '30s',  target: 10 },    // Warm up
-    { duration: '1m',   target: 50 },    // Light load
-    { duration: '1m',   target: 100 },   // Medium load
-    { duration: '1m',   target: 250 },   // Heavy load
-    { duration: '2m',   target: 500 },   // Extreme load (should stress t3.micro)
-    { duration: '2m',   target: 500 },   // Hold at peak
+    { duration: '30s',  target: 5 },
+    { duration: '1m',   target: Math.ceil(MAX_VUS / 2) },
+    { duration: '1m',   target: MAX_VUS },
+    { duration: '1m',   target: MAX_VUS },
     { duration: '1m',   target: 0 },     // Cool down
   ],
   thresholds: {

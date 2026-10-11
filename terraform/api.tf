@@ -53,7 +53,7 @@ resource "aws_apigatewayv2_api" "frontend_api" {
   cors_configuration {
     allow_origins = [
       "https://${aws_cloudfront_distribution.frontend.domain_name}",
-      "http://localhost:3000"
+      "http://localhost:5173"
     ]
     allow_methods = ["GET", "POST", "OPTIONS"]
     allow_headers = ["Authorization", "Content-Type"]

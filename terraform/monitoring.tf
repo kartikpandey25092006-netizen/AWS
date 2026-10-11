@@ -196,12 +196,12 @@ resource "aws_cloudwatch_metric_alarm" "instance_health" {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CloudWatch Alarm 5 – Memory Utilization (Feature: Memory Monitoring)
-# Triggers Lambda via SNS to remediate if RAM usage is > 85%.
+# Triggers Lambda via SNS to remediate if RAM usage is > 60%.
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource "aws_cloudwatch_metric_alarm" "high_memory" {
   alarm_name          = "${var.project_name}-high-memory"
-  alarm_description   = "Triggers when EC2 Memory utilisation exceeds 60% for 60s"
+  alarm_description   = "Triggers when EC2 Memory utilisation exceeds 60% for 60 seconds"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "mem_used_percent"

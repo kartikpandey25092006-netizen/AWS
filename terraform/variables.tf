@@ -15,7 +15,7 @@ variable "project_name" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type (must be Free Tier eligible)."
+  description = "EC2 instance type for the demo web server. Review current account and regional pricing before deployment."
   type        = string
   default     = "t3.micro"
 }

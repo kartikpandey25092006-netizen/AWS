@@ -13,10 +13,17 @@ API_URL=$(terraform output -raw api_gateway_url)
 COGNITO_AUTHORITY=$(terraform output -raw cognito_authority)
 COGNITO_CLIENT_ID=$(terraform output -raw cognito_user_pool_client_id)
 COGNITO_DOMAIN=$(terraform output -raw cognito_domain)
+FRONTEND_URL=$(terraform output -raw cloudfront_domain)
+FRONTEND_DISTRIBUTION_ID=$(terraform output -raw cloudfront_distribution_id)
 cd ..
 
-if [ -z "$FRONTEND_BUCKET" ] || [ -z "$INSTANCE_ID" ]; then
-    echo "❌ Error: Could not find Terraform outputs. Have you run 'terraform apply'?"
+if [ -z "$FRONTEND_BUCKET" ] || [ -z "$INSTANCE_ID" ] || [ -z "$API_URL" ] || [ -z "$COGNITO_AUTHORITY" ] || [ -z "$COGNITO_CLIENT_ID" ] || [ -z "$COGNITO_DOMAIN" ] || [ -z "$FRONTEND_URL" ] || [ -z "$FRONTEND_DISTRIBUTION_ID" ]; then
+    echo "Error: Required Terraform outputs are missing. Review the deployment and outputs before continuing."
+    exit 1
+fi
+
+if ! aws sts get-caller-identity >/dev/null; then
+    echo "Error: AWS CLI credentials are unavailable. Select the intended AWS_PROFILE and sign in first."
     exit 1
 fi
 
@@ -31,7 +38,7 @@ EOF
 # 2. Build the React app
 echo "📦 Building frontend..."
 cd frontend
-npm install
+PUPPETEER_SKIP_DOWNLOAD=true npm ci --include=dev
 npm run build
 cd ..
 
@@ -63,4 +70,15 @@ aws ssm wait command-executed \
     --command-id "$COMMAND_ID" \
     --instance-id "$INSTANCE_ID"
 
-echo "✅ Deployment successful! Visit the EC2 Public IP."
+INVALIDATION_ID=$(aws cloudfront create-invalidation \
+    --distribution-id "$FRONTEND_DISTRIBUTION_ID" \
+    --paths "/*" \
+    --query "Invalidation.Id" \
+    --output text)
+
+echo "Waiting for CloudFront invalidation ${INVALIDATION_ID}..."
+aws cloudfront wait invalidation-completed \
+    --distribution-id "$FRONTEND_DISTRIBUTION_ID" \
+    --id "$INVALIDATION_ID"
+
+echo "Deployment successful. Open ${FRONTEND_URL}."

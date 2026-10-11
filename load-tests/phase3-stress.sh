@@ -5,12 +5,10 @@
 #
 # This script:
 #   1. Injects CPU stress directly on the EC2 instance via SSM
-#   2. Simultaneously runs HTTP load via k6
-#   3. Monitors CloudWatch alarm state in real-time
-#   4. Waits for the self-healing Lambda to fire
-#   5. Verifies recovery and generates a report
+#   2. Monitors CloudWatch alarm state in real-time
+#   3. Checks the remediation Lambda and generates a report
 #
-# Usage:  ./phase3-stress.sh [--cpu-load 95] [--duration 600]
+# Usage:  ./phase3-stress.sh [--cpu-load 95] [--duration 360]
 # ═══════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -21,11 +19,28 @@ TERRAFORM_DIR="$SCRIPT_DIR/../terraform"
 
 # Get live values from Terraform
 INSTANCE_ID=$(cd "$TERRAFORM_DIR" && terraform output -raw ec2_instance_id)
-INSTANCE_IP=$(cd "$TERRAFORM_DIR" && terraform output -raw ec2_public_ip)
-ALARM_NAME="self-healing-high-cpu"
+SITE_URL=$(cd "$TERRAFORM_DIR" && terraform output -raw cloudfront_domain)
+ALARM_NAME=$(cd "$TERRAFORM_DIR" && terraform output -raw alarm_high_cpu)
 
-CPU_LOAD="${1:-95}"       # Default: 95% CPU
-DURATION="${2:-600}"      # Default: 600 seconds (10 minutes)
+CPU_LOAD=95
+DURATION=360
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cpu-load) CPU_LOAD="${2:-}"; shift 2 ;;
+    --duration) DURATION="${2:-}"; shift 2 ;;
+    --help) echo "Usage: $0 [--cpu-load 1..100] [--duration 60..600]"; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [[ ! "$CPU_LOAD" =~ ^[0-9]+$ ]] || (( CPU_LOAD < 1 || CPU_LOAD > 100 )); then
+  echo "CPU load must be an integer from 1 to 100." >&2
+  exit 2
+fi
+if [[ ! "$DURATION" =~ ^[0-9]+$ ]] || (( DURATION < 60 || DURATION > 600 )); then
+  echo "Duration must be an integer from 60 to 600 seconds." >&2
+  exit 2
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -40,7 +55,7 @@ echo -e "${BOLD}  Phase 3: Self-Healing Stress Test${NC}"
 echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "  Instance:    ${CYAN}${INSTANCE_ID}${NC}"
-echo -e "  IP:          ${CYAN}${INSTANCE_IP}${NC}"
+echo -e "  Website:     ${CYAN}${SITE_URL}${NC}"
 echo -e "  CPU Load:    ${YELLOW}${CPU_LOAD}%${NC}"
 echo -e "  Duration:    ${YELLOW}${DURATION}s${NC}"
 echo -e "  Alarm:       ${CYAN}${ALARM_NAME}${NC}"
@@ -64,7 +79,7 @@ ALARM_STATE=$(aws cloudwatch describe-alarms --alarm-names "$ALARM_NAME" \
 echo -e "  ${GREEN}✓${NC} Alarm state: $ALARM_STATE"
 
 # Check Nginx is responding
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://${INSTANCE_IP}/" --connect-timeout 5 || echo "000")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/health" --connect-timeout 5 || echo "000")
 if [ "$HTTP_CODE" = "200" ]; then
   echo -e "  ${GREEN}✓${NC} Nginx responding (HTTP $HTTP_CODE)"
 else
@@ -101,6 +116,17 @@ SSM_RESPONSE=$(aws ssm send-command \
   --output text)
 
 echo -e "  ${GREEN}✓${NC} SSM Command sent: ${SSM_RESPONSE}"
+STRESS_STARTED=true
+cleanup_stress() {
+  if [[ "${STRESS_STARTED:-false}" == true ]]; then
+    aws ssm send-command \
+      --instance-ids "$INSTANCE_ID" \
+      --document-name "AWS-RunShellScript" \
+      --parameters 'commands=["pkill -x stress-ng || true"]' \
+      --comment "Stop CloudOps portfolio stress test" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_stress EXIT
 echo ""
 
 # ── Step 3: Monitor alarm state ──────────────────────────────
@@ -170,7 +196,6 @@ cat > "$SCRIPT_DIR/results/phase3-report.json" <<EOF
   "phase": "Phase 3 - Stress Test",
   "timestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
   "instance_id": "${INSTANCE_ID}",
-  "instance_ip": "${INSTANCE_IP}",
   "cpu_load_injected": "${CPU_LOAD}%",
   "stress_duration_seconds": ${DURATION},
   "baseline_cpu": "${BASELINE_CPU}",

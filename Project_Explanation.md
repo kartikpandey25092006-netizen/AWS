@@ -1,33 +1,27 @@
 # Self-Healing Cloud Infrastructure
 
-## What is this project?
-This project is an automated, **"Self-Healing" Cloud Architecture** built on Amazon Web Services (AWS). 
+## What this project is
 
-Normally, if a server crashes or gets overwhelmed by traffic, a human engineer has to wake up in the middle of the night, log into the server, and fix it (for example, by restarting the web server or rebooting the machine). 
+This is a portfolio CloudOps system for a small web service running on AWS. It watches the service and its EC2 host, attempts a few automated recovery actions, records the events, and provides an operator dashboard.
 
-This project completely automates that process using a combination of AWS tools. If something goes wrong, the system detects it and fixes itself instantly—without human intervention.
+## How the parts work together
 
----
+1. **EC2 and Nginx:** Terraform creates one EC2 web server. Nginx serves the built React frontend, which opens on the Fieldwork demo storefront. SSM lets AWS services send commands to the host without opening SSH access.
+2. **CloudWatch and SNS:** CloudWatch collects CPU, memory, and EC2 status metrics. CPU or memory alarms publish to SNS.
+3. **Remediation Lambda:** SNS invokes a Python Lambda. It uses SSM to restart Nginx, records a recovery audit event in DynamoDB and S3, and checks whether Nginx is active.
+4. **Health Manager:** EventBridge invokes a second Lambda every minute. It checks EC2 health and the public `/health` endpoint, tracks retries in DynamoDB, and can attempt a reboot or Nginx restart.
+5. **Predictor:** A scheduled Lambda analyzes recent CPU and memory trends and can send a Discord warning if configured. This is a trend heuristic, not a guarantee that a failure will be predicted.
+6. **API and sign-in:** The React dashboard calls API Gateway. Cognito provides sign-in, and API Gateway requires a valid JWT on both dashboard routes. The API reads metrics and audit/state data and computes a custom health score.
+7. **Frontend delivery:** The deployment script uploads the Vite build to S3, asks EC2 through SSM to sync it into Nginx, and CloudFront serves the site over HTTPS to viewers. The CloudFront-to-EC2 origin hop is currently HTTP, and the EC2 origin is directly reachable over HTTP.
 
-## How does it work?
-The architecture relies on a few key AWS services working together to form "Self-Healing Loops":
+## What the dashboard shows
 
-### 1. The Watchdog (Amazon CloudWatch)
-CloudWatch constantly monitors the health and performance of our web server (an EC2 instance running Nginx). It watches metrics like CPU usage and system health status. 
+The React frontend opens on a Fieldwork storefront with a static demo catalog, category filters, search, cart, and simulated checkout. The product catalog and cart are browser-only; the app does not create saved orders, inventory, or payments. The CloudOps dashboard remains available from Store navigation. It polls every 10 seconds and displays uptime, CPU/memory graphs, recovery state, health score, audit events, and a maintenance toggle.
 
-### 2. The Trigger (Amazon SNS & EventBridge)
-If the CPU spikes above 75% for too long, or if the server stops responding, CloudWatch triggers an Alarm. This alarm sends a signal through Amazon SNS (Simple Notification Service) and instantly emails the DevOps team that a failure occurred.
+## Important limits
 
-### 3. The Healer (AWS Lambda & Systems Manager)
-Instead of waiting for a human to read the email, the alarm automatically triggers an **AWS Lambda function** (a serverless Python script). 
-* If the web server application is stuck (high CPU), the Lambda function uses **AWS Systems Manager (SSM)** to securely reach inside the server and run a command to restart the Nginx web service, fixing the issue instantly.
-* If the actual virtual hardware fails, AWS automatically migrates the server to healthy hardware.
-
-### 4. The Dashboard & Audit Trail (React & S3)
-* Every time a self-healing action occurs, the system writes a detailed audit log to an **Amazon S3 Bucket** so the engineers can review what happened the next morning.
-* A live **React Frontend Dashboard** (which you can view in your browser) visualizes the real-time health of the system, showing server uptime, CPU metrics, and recent alarm statuses.
-
----
-
-## Summary
-In short, this project demonstrates advanced **Cloud Operations (CloudOps)** and **Site Reliability Engineering (SRE)**. It takes a standard web server and wraps it in a protective, automated layer of monitoring and remediation, ensuring maximum uptime and reliability!
+- Recovery is attempted, not guaranteed. A single EC2 instance is not a high-availability architecture.
+- The `self-healing-auto-recovery` CloudWatch alarm currently sends an ops notification. Reboot attempts are handled by the periodic Health Manager.
+- The memory alarm, dashboard indicator, and predictor use a 60% threshold. Confirm it against Terraform before changing or testing the deployed stack.
+- AWS costs depend on the account, region, and current usage. Do not assume deployment is free.
+- The storefront is only a portfolio UI. Its product model, persistence, inventory/fulfillment, and customer/admin authorization need decisions before adding backend commerce behavior. See `docs/PRODUCT_ROADMAP.md`.

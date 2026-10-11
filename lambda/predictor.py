@@ -34,7 +34,7 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 # ── Thresholds (must match CloudWatch alarm thresholds) ───────────────────
 CPU_THRESHOLD    = 75.0   # percent
-MEMORY_THRESHOLD = 85.0   # percent
+MEMORY_THRESHOLD = 60.0   # percent, matching the CloudWatch memory alarm
 PREDICT_AHEAD    = 10     # minutes into the future
 
 

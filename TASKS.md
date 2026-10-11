@@ -1,61 +1,59 @@
-# Backlog & Tasks
+# Backlog
 
-## P0: Critical
-- **TASK-001: Secure API Gateway**
-  - **Goal:** Prevent unauthorized access to the infrastructure API.
-  - **Files likely affected:** `terraform/api.tf`, `frontend/src/App.tsx`.
-  - **Dependencies:** None.
-  - **Acceptance criteria:** Requests without an API key or auth token are rejected (401/403). Maintenance mode cannot be toggled maliciously.
-  - **Testing:** Verify unauthorized requests fail and authorized requests succeed.
+The current architecture and security posture are described in `docs/ARCHITECTURE.md` and `docs/SECURITY.md`. The broader portfolio product plan is in `docs/PRODUCT_ROADMAP.md`.
 
-## P1: High
-- **TASK-002: Restrict CORS Policy**
-  - **Goal:** Ensure API only accepts cross-origin requests from the known frontend host.
-  - **Files likely affected:** `lambda/api.py`, `terraform/api.tf`.
-  - **Dependencies:** None.
-  - **Acceptance criteria:** `OPTIONS` and standard requests return strict `Access-Control-Allow-Origin` headers.
-  - **Testing:** cURL requests from unauthorized origins should fail CORS checks in browsers.
+## P0: Verify and harden the existing CloudOps product
 
-- **TASK-003: Componentize Frontend Monolith**
-  - **Goal:** Refactor `App.tsx` into maintainable atomic components.
-  - **Files likely affected:** `frontend/src/App.tsx`, `frontend/src/components/*`.
-  - **Dependencies:** None.
-  - **Acceptance criteria:** UI remains visually identical, but logic is separated into `Dashboard`, `MetricCard`, `AuditList`, etc.
-  - **Testing:** Verify Vite builds successfully and the dashboard functions normally.
+- **TASK-001: Verify Cognito authorization in AWS**
+  - **Code status:** Cognito JWT authorization is configured on both API routes in Terraform.
+  - **Owner action:** Apply only after reviewing a Terraform plan, then verify as an unauthenticated and authenticated user.
+  - **Acceptance:** No token receives 401/403; a valid authorized token can read status and change maintenance mode.
 
-## P2: Medium
-- **TASK-004: Implement React Query for Data Fetching**
-  - **Goal:** Replace `setInterval` polling with `@tanstack/react-query`.
-  - **Files likely affected:** `frontend/package.json`, `frontend/src/App.tsx`, `frontend/src/services/api.ts`.
-  - **Dependencies:** TASK-003 recommended.
-  - **Acceptance criteria:** Dashboard polls efficiently, handles loading states properly, and prevents duplicate requests.
-  - **Testing:** Verify network tab shows properly spaced polling without overlapping requests.
+- **TASK-002: Validate API requests and avoid leaking errors**
+  - **Status:** Implemented in `lambda/api.py`; local unit tests added.
+  - **Acceptance:** Malformed JSON, missing/wrong-type `maintenance`, unsupported methods, and unknown paths return safe client errors; internal exception text is not returned.
 
-- **TASK-005: Add Vitest & React Testing Library**
-  - **Goal:** Introduce unit testing to the frontend.
-  - **Files likely affected:** `frontend/package.json`, `frontend/vite.config.ts`, `frontend/src/**/*.test.tsx`.
-  - **Dependencies:** TASK-003.
-  - **Acceptance criteria:** `npm run test` executes successfully with basic coverage for components.
-  - **Testing:** Automated tests run and pass.
+- **TASK-003: Confirm API CORS and origin exposure**
+  - **Code status:** API Gateway allows the CloudFront origin and `http://localhost:5173`, matching Vite's default dev port.
+  - **Owner action:** Verify live browser behavior; decide whether to remove local development origin in deployed configuration and whether to restrict direct EC2 access.
 
-- **TASK-006: Add Pytest for Backend**
-  - **Goal:** Introduce unit testing to Python Lambda functions.
-  - **Files likely affected:** `lambda/requirements-dev.txt`, `lambda/tests/*.py`.
-  - **Dependencies:** None.
-  - **Acceptance criteria:** Functions can be tested locally using `moto` without hitting real AWS services.
-  - **Testing:** `pytest` passes.
+## P1: Complete and polish the CloudOps dashboard
 
-## P3: Low
-- **TASK-007: Migrate to GitHub Actions**
-  - **Goal:** Replace `deploy-frontend.sh` with a secure CI/CD pipeline.
-  - **Files likely affected:** `.github/workflows/deploy.yml`.
-  - **Dependencies:** None.
-  - **Acceptance criteria:** Pushes to `main` automatically deploy the frontend.
-  - **Testing:** Run a test pipeline execution.
+- **TASK-004: Show the API health score in the dashboard**
+  - **Status:** Implemented locally as an overall score/grade card. Verify with live API data after deployment.
 
-- **TASK-008: Implement HTTPS / CloudFront**
-  - **Goal:** Serve frontend securely via CDN rather than raw EC2 IP.
-  - **Files likely affected:** `terraform/*.tf`.
-  - **Dependencies:** A registered domain name.
-  - **Acceptance criteria:** Dashboard is available via `https://...` and raw HTTP is redirected.
-  - **Testing:** Navigate to the domain over HTTPS.
+- **TASK-005: Add visible loading, error, and empty states**
+  - **Status:** Implemented a visible connection error and empty audit state. Review interaction in browser.
+
+- **TASK-006: Add frontend tests and split `App.tsx` into components**
+  - Add Vitest and React Testing Library after confirming package installation is available.
+  - Keep existing dashboard behavior and styles while extracting focused components.
+
+- **TASK-007: Test actual recovery paths in a staging deployment**
+  - Validate CPU alarm to SNS to remediation Lambda to SSM.
+  - Validate Health Manager EC2 checks and application `/health` recovery separately.
+  - Confirm lifecycle records and recovery state in AWS.
+
+## P2: Build the portfolio commerce experience
+
+See `docs/PRODUCT_ROADMAP.md` for phases, acceptance checks, and the user-led workflow.
+
+- **TASK-008: Decide the store scope and product type**
+  - Choose physical, digital, or demo-only products; define the customer and administrator flows.
+- **TASK-009: Add persistent catalog and product detail routes**
+  - **Status:** A static storefront and local filters/search are implemented; product detail routes and backend catalog are pending.
+- **TASK-010: Add persistent cart and retry-safe simulated orders**
+  - **Status:** Browser-local cart and simulated confirmation exist; no order is saved.
+- **TASK-011: Add customer order history and an admin order/product view**
+- **TASK-012: Connect commerce service health and order activity to CloudOps monitoring**
+
+## P3: Improve delivery and operations
+
+- **TASK-013: Add repeatable frontend and backend CI checks**
+  - Run lint, unit tests, and frontend build on pull requests.
+- **TASK-014: Improve origin security and custom-domain support**
+  - Decide on CloudFront-to-origin HTTPS and block public bypass to the EC2 origin.
+- **TASK-015: Add budgets and environment teardown instructions**
+  - Document actual resources and estimate/monitor costs before enabling optional features.
+
+See [`docs/AWS_CONSOLE_BATCHES.md`](docs/AWS_CONSOLE_BATCHES.md) for the owner-run Console sequence and AWS Core verification points.

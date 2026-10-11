@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from 'react-oidc-context';
+import { Card } from './components/ui/card';
 import {
   Server,
   Cpu,
@@ -39,6 +40,12 @@ interface HealingState {
   problem?: string;
 }
 
+interface HealthScore {
+  overall: number;
+  grade: string;
+  status: string;
+}
+
 function App() {
   const auth = useAuth();
   const [theme, setTheme] = useState('dark');
@@ -57,6 +64,10 @@ function App() {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [isTogglingMaintenance, setIsTogglingMaintenance] = useState(false);
   const [healingState, setHealingState] = useState<{ [key: string]: HealingState }>({});
+  const [healthScore, setHealthScore] = useState<HealthScore | null>(null);
+  const [apiError, setApiError] = useState('');
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  const accessToken = auth.user?.access_token;
 
   // Theme Toggle
   useEffect(() => {
@@ -66,40 +77,46 @@ function App() {
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
   // Fetch Live Data
-  const fetchData = async (currentRange: string) => {
+  const fetchData = useCallback(async (currentRange: string) => {
     const apiUrl = import.meta.env.VITE_API_URL;
     if (!apiUrl) {
-      console.warn('VITE_API_URL is not set. Cannot fetch live metrics.');
+      await Promise.resolve();
+      setApiError('Live metrics are not configured. Add the API URL to the frontend environment.');
+      setIsLoading(false);
       return;
     }
 
     try {
       const headers: Record<string, string> = {};
-      if (auth.user?.access_token) {
-        headers['Authorization'] = `Bearer ${auth.user.access_token}`;
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
       }
 
       const res = await fetch(`${apiUrl}/api/status?time_range=${currentRange}`, { headers });
-      if (res.ok) {
-        const data = await res.json();
-        setUptime(data.uptime || 0);
-        setHistory(data.cpu_history || []);
-        setCurrentCpu(data.current_cpu || 0);
-        setMemoryHistory(data.memory_history || []);
-        setCurrentMemory(data.current_memory || 0);
-        setIsSimulating(data.is_simulating || false);
-        setIsMemorySimulating(data.is_memory_simulating || false);
-        setAuditLogs(data.audit_logs || []);
-        setHealingState(data.healing_state || {});
-        if (!isTogglingMaintenance) {
-          setMaintenanceMode(data.maintenance_mode || false);
-        }
-        setIsLoading(false);
+      if (!res.ok) {
+        throw new Error(`Metrics request failed (HTTP ${res.status}).`);
       }
-    } catch (e) {
-      console.error('Failed to fetch API', e);
+      const data = await res.json();
+      setUptime(data.uptime || 0);
+      setHistory(data.cpu_history || []);
+      setCurrentCpu(data.current_cpu || 0);
+      setMemoryHistory(data.memory_history || []);
+      setCurrentMemory(data.current_memory || 0);
+      setIsSimulating(data.is_simulating || false);
+      setIsMemorySimulating(data.is_memory_simulating || false);
+      setAuditLogs(data.audit_logs || []);
+      setHealingState(data.healing_state || {});
+      setHealthScore(data.health_score || null);
+      setApiError('');
+      if (!isTogglingMaintenance) {
+        setMaintenanceMode(data.maintenance_mode || false);
+      }
+      setIsLoading(false);
+    } catch {
+      setApiError('Unable to load live metrics. Check the API connection and try again.');
+      setIsLoading(false);
     }
-  };
+  }, [accessToken, isTogglingMaintenance]);
 
   useEffect(() => {
     const isAuthRequired = Boolean(import.meta.env.VITE_COGNITO_AUTHORITY);
@@ -107,10 +124,10 @@ function App() {
       return;
     }
 
-    fetchData(timeRange); // Initial fetch
-    const interval = setInterval(() => fetchData(timeRange), 10000); // Poll every 10s
-    return () => clearInterval(interval);
-  }, [timeRange, auth.isAuthenticated, auth.user?.access_token]);
+    const initialFetch = window.setTimeout(() => void fetchData(timeRange), 0);
+    const interval = setInterval(() => void fetchData(timeRange), 10000);
+    return () => { window.clearTimeout(initialFetch); clearInterval(interval) };
+  }, [timeRange, auth.isAuthenticated, fetchData]);
 
   // Uptime local tick (so seconds update between polls)
   useEffect(() => {
@@ -120,6 +137,11 @@ function App() {
     return () => clearInterval(timer);
   }, [isLoading]);
 
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
   const formatUptime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -127,11 +149,11 @@ function App() {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const timeAgo = (dateString: string) => {
+  const timeAgo = (dateString: string, now: number) => {
     try {
-      const date = new Date(dateString);
-      const now = new Date();
-      const diffMs = now.getTime() - date.getTime();
+      const timestamp = Date.parse(dateString);
+      if (!Number.isFinite(timestamp)) return dateString;
+      const diffMs = now - timestamp;
       const diffMins = Math.floor(diffMs / 60000);
       if (diffMins < 1) return 'Just now';
       if (diffMins < 60) return `${diffMins}m ago`;
@@ -197,7 +219,7 @@ function App() {
               Self-Healing: {log.action || 'Unknown Action'}
             </span>
             <span className="activity-time">
-              {timeAgo(log.timestamp)} • Triggered by {log.alarm_name || 'Alarm'}
+              {timeAgo(log.timestamp, currentTime)} • Triggered by {log.alarm_name || 'Alarm'}
             </span>
             {!success && log.error && (
               <span style={{ fontSize: '0.85rem', color: 'var(--accent-red)', marginTop: '0.25rem' }}>
@@ -232,7 +254,7 @@ function App() {
           </div>
           <div className="activity-content">
             <span className="activity-title">Instance State: {log.new_state}</span>
-            <span className="activity-time">{timeAgo(log.timestamp)} • EventBridge Lifecycle Log</span>
+            <span className="activity-time">{timeAgo(log.timestamp, currentTime)} • EventBridge Lifecycle Log</span>
           </div>
         </div>
       );
@@ -296,6 +318,7 @@ function App() {
         </div>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           {isLoading && <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}><RefreshCw size={14} className="spin" style={{ marginRight: '0.5rem' }} />Connecting to AWS...</span>}
+          {!isLoading && apiError && <span role="status" style={{ color: 'var(--accent-orange)', fontSize: '0.85rem' }}>{apiError}</span>}
 
           {auth.isAuthenticated ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-card)', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
@@ -352,6 +375,13 @@ function App() {
 
 
       <div className="bento-grid">
+        <Card className="glass-panel status-card" aria-live="polite">
+          <div className="status-header"><ShieldCheck size={20} color="var(--accent-green)" /><span>Overall Health</span></div>
+          <div style={{ marginTop: 'auto' }}>
+            <p className="status-value">{healthScore ? `${healthScore.overall}` : '--'}<span style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}> / 100</span></p>
+            <p className="status-sub">{healthScore ? `Grade ${healthScore.grade} · ${healthScore.status}` : 'Waiting for health score'}</p>
+          </div>
+        </Card>
         {/* EC2 Health */}
         <div className="glass-panel status-card">
           <div className="status-header">
@@ -443,7 +473,7 @@ function App() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
             <span className="status-value">{activeGraph === 'cpu' ? currentCpu : currentMemory}%</span>
-            <span className="status-sub">/ {activeGraph === 'cpu' ? '75%' : '85%'} threshold</span>
+            <span className="status-sub">/ {activeGraph === 'cpu' ? '75%' : '60%'} threshold</span>
           </div>
 
           <div style={{ height: '120px', width: '100%', marginTop: 'auto' }}>
@@ -597,7 +627,7 @@ function App() {
                   const success = log.success !== false;
                   return (
                     <tr key={i}>
-                      <td style={{ whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{timeAgo(log.timestamp)}</td>
+                      <td style={{ whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{timeAgo(log.timestamp, currentTime)}</td>
                       <td style={{ fontWeight: 500 }}>
                         {log.alarm_name || (log.action?.includes('reboot') ? 'Hardware Failure' : 'Application Failure')}
                       </td>

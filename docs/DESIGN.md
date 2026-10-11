@@ -1,6 +1,6 @@
 # Design System
 
-This document outlines the existing UI design system found in the React dashboard.
+This document describes the separate design systems used by the CloudOps dashboard and the Fieldwork demo storefront.
 
 ## Typography
 - Main font: System sans-serif (Inter/Roboto default via Tailwind/browser).
@@ -36,4 +36,10 @@ This document outlines the existing UI design system found in the React dashboar
 - **Error:** Some API errors are caught and logged to console, but lack explicit UI error states (e.g., "Failed to fetch metrics").
 - **Empty States:** The audit log handles empty states by not rendering, but an explicit "No recent activity" message is preferred.
 
-*Rule: Maintain this visual consistency when modifying the UI. Reuse existing CSS variables.*
+## Fieldwork Store
+- Warm paper backgrounds, muted green actions, terracotta details, and Playfair Display / DM Sans typography.
+- Product illustrations are CSS shapes so the portfolio UI does not depend on externally hosted product images.
+- Shared Button, Badge, Input, and Card primitives follow the shadcn/ui approach. Keep interactions keyboard accessible and responsive.
+- Cart and newsletter form are demos; do not imply that they save information or charge a customer.
+
+*Rule: Keep the CloudOps dashboard and storefront visually distinct, reuse the appropriate local components, and make demo-only behavior explicit.*

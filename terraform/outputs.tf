@@ -9,7 +9,7 @@ output "ec2_instance_id" {
 }
 
 output "ec2_public_ip" {
-  description = "Public IP of the web server (visit http://<ip> to verify nginx)"
+  description = "Public IP of the EC2 web origin; prefer the CloudFront HTTPS output for browser access"
   value       = aws_instance.web_server.public_ip
 }
 
@@ -118,6 +118,11 @@ output "admin_user_creation_command" {
 output "cloudfront_domain" {
   description = "CloudFront HTTPS Distribution URL for Frontend"
   value       = "https://${aws_cloudfront_distribution.frontend.domain_name}"
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID used for frontend cache invalidation"
+  value       = aws_cloudfront_distribution.frontend.id
 }
 
 

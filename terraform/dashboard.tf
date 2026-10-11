@@ -189,6 +189,7 @@ resource "aws_cloudwatch_dashboard" "self_healing" {
           title = "🚨 Alarm States"
           alarms = [
             aws_cloudwatch_metric_alarm.high_cpu.arn,
+            aws_cloudwatch_metric_alarm.high_memory.arn,
             aws_cloudwatch_metric_alarm.auto_recovery.arn,
             aws_cloudwatch_metric_alarm.instance_health.arn,
             aws_cloudwatch_metric_alarm.lambda_errors.arn

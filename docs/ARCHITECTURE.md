@@ -1,47 +1,55 @@
-# Architecture Document
+# Architecture
 
-## CURRENT Architecture
+## Current system
 
-### Frontend
-- **Framework:** React 18 (SPA) built with Vite.
-- **Styling:** Tailwind CSS (via `index.css`), Lucide React icons, Recharts for graphs.
-- **Hosting:** Static files synced to S3 and served directly by Nginx on an EC2 `t3.micro` instance using its raw public IP.
-- **Data Fetching:** Polls API Gateway every 10 seconds via `setInterval`.
+The project is a single-instance CloudOps demonstration. Terraform provisions the AWS resources; the frontend is a Vite/React single-page app; Python Lambda functions provide the API, event remediation, periodic health checks, and predictive alerts.
 
-### Backend
-- **Framework:** Python 3.11/3.12 AWS Lambda functions.
-- **APIs:** AWS API Gateway routing to `lambda/api.py`.
-- **Background Jobs:** 
-  - `health_manager.py`: Triggered by EventBridge cron.
-  - `main.py`: Triggered by SNS (from CloudWatch Alarms or EventBridge state changes).
+### Frontend and sign-in
 
-### Database & Storage
-- **DynamoDB:** Stores `self-healing-logs` and `self-healing-state`.
-- **S3:** Stores frontend assets and archived audit logs.
+- **Framework:** React 19 and TypeScript, built with Vite. Recharts renders metric graphs and Lucide React supplies icons.
+- **Authentication:** Amazon Cognito User Pool Hosted UI. The browser app is a public OIDC client; it sends its access token as a bearer token to the API.
+- **Static hosting:** `deploy-frontend.sh` builds the frontend, uploads it to the private frontend S3 bucket, and asks EC2 through SSM to sync the files into Nginx's document root.
+- **Public delivery:** CloudFront serves the EC2 Nginx origin. Viewer requests are redirected to HTTPS using CloudFront's default certificate. CloudFront connects to the origin over HTTP, and the EC2 security group still permits direct public HTTP access.
+- **Data refresh:** The dashboard polls `GET /api/status` every 10 seconds. It can select 40-minute, 1-hour, or 24-hour metric ranges.
+- **Portfolio storefront:** The app now opens on a static Fieldwork storefront. Catalog filters, search, cart, and simulated checkout run only in browser state; no commerce API or database exists. The operator dashboard stays available through Store navigation.
+- **UI components:** Vite uses Tailwind CSS v4 and shadcn/ui conventions with local Button, Badge, Input, and Card components. Dashboard styles remain in the existing CSS system.
 
-### Authentication
-- **Current State:** None. The API Gateway is fully public.
+### API and authorization
 
-### External Services
-- **AWS CloudWatch:** Metrics collection and Alarms.
-- **AWS SNS:** Notifications and triggering Lambdas.
-- **AWS SSM:** Systems Manager Run Command for executing bash scripts on EC2 securely.
+- API Gateway is an HTTP API with a Cognito JWT authorizer on both `GET /api/status` and `POST /api/maintenance`.
+- API Gateway CORS allows the CloudFront origin and `http://localhost:5173` for local Vite development.
+- The API Lambda reads EC2 uptime and CloudWatch CPU/memory, queries recent audit events and recovery state from DynamoDB, reads alarm status, and computes a custom weighted health score.
+- The maintenance route disables or enables CloudWatch alarm actions. It does not stop the alarms from evaluating or prevent the Health Manager from running.
 
-### Deployment
-- Infrastructure managed via Terraform (`/terraform`).
-- Frontend deployment managed by a local bash script (`deploy-frontend.sh`).
+### Recovery and monitoring paths
 
-### Data Flow
-1. **Metrics:** EC2 (CloudWatch Agent) -> CloudWatch -> API Gateway -> React Dashboard.
-2. **Remediation:** CloudWatch Alarm -> SNS -> Lambda (`main.py`) -> SSM -> EC2.
-3. **Audit Logging:** Lambda -> DynamoDB & S3.
+1. **CPU or memory alarm:** CloudWatch sends the alarm to the remediation SNS topic. SNS invokes `lambda/main.py`, which sends an SSM command to restart Nginx. For a memory alarm it also attempts to stop stress processes. The function records an audit event and checks whether Nginx is active.
+2. **Periodic health manager:** EventBridge invokes `lambda/health_manager.py` every minute. It checks EC2 status and the instance's `/health` endpoint. It tracks attempts and stabilization time in DynamoDB; recovery actions are an EC2 reboot or an Nginx restart through SSM.
+3. **Predictive monitoring:** EventBridge invokes `lambda/predictor.py` every five minutes. It analyzes recent CPU and memory datapoints with a linear trend and can send a Discord pre-alert if a threshold breach appears likely and a webhook is configured. This is a heuristic forecast, not a guarantee of failure prediction.
+4. **EC2 lifecycle audit:** EventBridge sends instance state-change events to `lambda/main.py`, which records lifecycle events.
+5. **CloudWatch alarms:** Terraform defines alarms for CPU, memory, system status, instance status, and remediation Lambda errors. The alarm named `self-healing-auto-recovery` currently sends an ops SNS notification; it is not configured with the native EC2 recover alarm action. The Health Manager is the code path that attempts a reboot after detecting an instance health problem.
 
----
+The CPU alarm defaults to 75%. The memory alarm is 60%; the dashboard indicator and predictor now use the same memory threshold.
 
-## RECOMMENDED Future Improvements
+### Data and storage
 
-- **API Security:** Secure API Gateway with an API Key or Cognito authorizer.
-- **Frontend Hosting:** Migrate from EC2 Nginx serving to S3 + CloudFront (CDN) with a custom domain and HTTPS.
-- **Data Fetching:** Replace manual `setInterval` polling with React Query (TanStack Query) or WebSockets.
-- **CI/CD:** Replace local bash scripts with GitHub Actions pipelines for automated Terraform and Vite builds.
-- **Componentization:** Refactor the monolithic `App.tsx` into atomic components.
+- DynamoDB `${project_name}-logs` stores audit events keyed by instance ID and timestamp.
+- DynamoDB `${project_name}-state` stores Health Manager state by resource ID.
+- A private, versioned, encrypted S3 audit bucket stores remediation and lifecycle records. Object lifecycle settings expire current records after 90 days and noncurrent versions after 30 days.
+- A separate private S3 bucket stages frontend build assets before EC2 syncs them to Nginx.
+
+### Infrastructure and deployment
+
+- `terraform/` contains the infrastructure definitions. The provider defaults to `us-east-1`; variables allow other regions.
+- Terraform expects a pre-existing S3 state bucket and DynamoDB lock table configured in `terraform/main.tf`.
+- The EC2 instance uses the default VPC, a public IP, an HTTP-only security group, SSM and CloudWatch Agent permissions, and inline user data that installs Nginx and the agent.
+- `deploy-frontend.sh` reads Terraform outputs and requires AWS CLI credentials in the shell environment. It does not select a profile itself.
+
+## Current limitations and follow-up
+
+- The API has Cognito JWT authorization in Terraform. Maintenance request validation and sanitized error responses are implemented locally; authorization still needs a live AWS check after the project owner applies the Terraform configuration.
+- CloudFront provides HTTPS to viewers, but the origin hop is HTTP and the EC2 origin can also be reached directly over HTTP. A custom domain, HTTPS origin, and origin access restriction are not configured.
+- The dashboard is one large `App.tsx` component and uses manual polling.
+- The health score is calculated by the API. The current React app does not render the returned `health_score` object.
+- The predictor runs periodically but its scheduled pre-alert is separate from the CloudWatch alarm remediation path.
+- Project documentation and load-test files may contain old target IPs, thresholds, or claims. Confirm against Terraform outputs and deployed AWS state before relying on them.

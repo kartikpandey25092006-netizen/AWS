@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Amazon CloudFront Distribution for Frontend HTTPS Exposure ($0 Free Tier)
+# Amazon CloudFront Distribution for HTTPS viewer delivery
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource "aws_cloudfront_distribution" "frontend" {

@@ -1,29 +1,42 @@
-# Security Requirements
+# Security
 
-## 1. Authentication & Authorization
-- **Current State:** The API Gateway is completely open. Unauthenticated users can view infrastructure metrics and toggle maintenance mode.
-- **Requirement:** Implement API Gateway authorization. Depending on complexity, this should either be a static API Key (for a single Ops user) or AWS Cognito / IAM authentication for role-based access.
+This document describes the current Terraform and application code, followed by work that remains. A Terraform configuration is not proof that the live AWS resources have the same settings; verify live changes after the project owner applies them.
 
-## 2. Secrets Management
-- No hardcoded secrets should exist in the codebase.
-- Environment variables must be loaded via `.env` (excluded from git) or passed through CI/CD secure variables.
-- Terraform must not output sensitive credentials in plaintext where avoidable.
+## Current controls
 
-## 3. Input Validation
-- The `POST /api/maintenance` endpoint must strictly validate the incoming JSON body. It currently trusts the input shape blindly, which could lead to exceptions.
+### Authentication and authorization
 
-## 4. Database Security
-- IAM Roles for Lambda must continue adhering to the principle of least privilege.
-- Ensure that the Lambda functions only have access to specific DynamoDB tables, and cannot scan the entire database.
+- API Gateway has a Cognito JWT authorizer on `GET /api/status` and `POST /api/maintenance`.
+- The React app sends the Cognito access token in the `Authorization: Bearer` header.
+- The Cognito app client is public and has no client secret. The initial operator user is created administratively.
+- Authorization is enforced at API Gateway. The Lambda function should still validate input because clients can send malformed requests even after authentication.
 
-## 5. API Validation & CORS
-- The API currently returns `Access-Control-Allow-Origin: *`.
-- **Requirement:** Update the CORS headers in `api.py` and Terraform to strictly allow only the specific domain hosting the React frontend.
+### Cross-origin requests and transport
 
-## 6. Network & Transport Security
-- The frontend is served over HTTP via the EC2 instance's IP.
-- **Requirement:** Implement HTTPS using a custom domain and AWS Certificate Manager (ACM) via CloudFront or an Application Load Balancer.
+- API Gateway CORS allows the CloudFront hostname and `http://localhost:5173` for local Vite development. Remove local origins from production configuration when they are no longer needed.
+- CloudFront redirects viewer traffic to HTTPS using its default certificate.
+- CloudFront connects to the EC2 Nginx origin over HTTP. EC2 also has public HTTP ingress, so users can bypass CloudFront and reach the origin directly. Do not describe the full path as end-to-end HTTPS.
 
-## 7. Error Leakage
-- Backend errors currently leak raw exception strings: `{"error": str(e)}`.
-- **Requirement:** Catch expected exceptions and return standardized, sanitized error messages to the client. Do not leak internal stack traces or database structure details.
+### AWS permissions and storage
+
+- EC2 uses an instance role for SSM, CloudWatch Agent, and read-only access to the frontend assets bucket.
+- Separate Lambda roles are defined for remediation, API, Health Manager, and Predictor.
+- Audit and state data use DynamoDB. Audit objects are written to an encrypted, versioned S3 bucket with lifecycle expiration.
+- Review wildcard resource permissions in the Lambda IAM policies against the exact AWS actions that support resource-level scoping. Keep each function limited to the resources and actions it needs.
+
+## Application safeguards
+
+- `POST /api/maintenance` accepts only a JSON object whose `maintenance` value is a boolean. Invalid JSON or values receive a client error without changing alarms.
+- Internal API failures return a generic error to the browser; detailed failures remain in Lambda logs for debugging.
+- Keep authentication, input validation, and server-side authorization in place for every route that can expose telemetry or change infrastructure state.
+- Do not put payment card data, credentials, tokens, or webhook secrets in source files, frontend bundles, logs, or Terraform outputs.
+- The Store newsletter and checkout are demonstration interactions only. The frontend does not save email addresses or orders and does not collect payment details.
+
+## Remaining security work
+
+1. Verify the deployed API returns 401/403 without a valid Cognito token and permits an authorized user.
+2. Verify CORS from the deployed CloudFront origin and confirm unapproved origins cannot read responses in a browser.
+3. Add role-based authorization before giving admin capabilities (product management, inventory changes, or order access) to a commerce feature.
+4. Restrict direct access to the EC2 origin and decide whether to use HTTPS from CloudFront to the origin.
+5. Review IAM policy scope and retention periods using the live account's requirements.
+6. Add tests for request validation, authorization expectations, and sanitized errors.

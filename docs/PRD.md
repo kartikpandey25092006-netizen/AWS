@@ -1,35 +1,43 @@
-# Product Requirements Document (PRD)
+# Product Requirements Document
 
-## Product Purpose
-The Self-Healing Cloud Architecture is an automated, event-driven infrastructure project designed to detect, log, and recover from failures automatically. It demonstrates modern Site Reliability Engineering (SRE) practices within the AWS Free Tier.
+## Product purpose
 
-## Problem Being Solved
-Manual intervention for basic infrastructure failures (like high CPU or stopped services) leads to prolonged downtime. This system solves that by instantly detecting issues and automatically running remediation scripts.
+This is a CloudOps portfolio project that demonstrates monitoring, recovery attempts, audit records, and an operator dashboard for a small web service. A future portfolio extension may add a demo storefront so the CloudOps system observes a more realistic application. The commerce scope is tracked in `PRODUCT_ROADMAP.md`.
 
-## Target Users
-- Operations Teams (Ops/SRE) who need a single-pane-of-glass dashboard.
-- Developers learning self-healing infrastructure patterns.
+AWS charges depend on account, region, usage, and current pricing. The project does not guarantee that deployment is free.
 
-## Core Functionality
-- **Monitoring:** Real-time tracking of EC2 CPU and memory via CloudWatch.
-- **Alerting:** CloudWatch Alarms trigger SNS notifications.
-- **Self-Healing:** Alarms trigger AWS Lambda functions that securely execute SSM commands (e.g., `systemctl restart nginx`) to remediate issues.
-- **Dashboard:** A React SPA that visualizes metrics, audit logs, and self-healing state.
-- **Maintenance Mode:** Ability to temporarily disable self-healing actions.
+## Problem being addressed
 
-## Current MVP / Existing Features
-- EC2 Auto Recovery & Auto Reboot.
-- High CPU alarm triggering an Nginx restart via SSM.
-- Real-time dashboard showing Uptime, CPU graph, Memory graph, and Audit Logs.
-- Toggle maintenance mode (disables/enables alarms).
-- S3 & DynamoDB audit logging.
+Basic infrastructure and application failures can require manual investigation and prolong downtime. The project demonstrates automated detection and recovery workflows, then gives an operator visibility into metrics and recorded actions.
 
-## Out-of-Scope Features
-- Multi-region failover.
-- Container orchestration (Kubernetes/ECS) - currently restricted to a single EC2 instance for simplicity.
-- Complex user management (RBAC).
+## Users
 
-## Success Criteria
-- 100% of detected CPU spikes or failed health checks trigger an automatic remediation.
-- The dashboard accurately reflects the real-time state of the infrastructure within 10 seconds.
-- The system operates entirely within the AWS Free Tier limits.
+- Students and developers learning cloud operations and SRE patterns.
+- Operators inspecting the state and recovery behavior of the demo service.
+- Future demo-store customers and administrators, if the commerce roadmap is implemented.
+
+## Current functionality
+
+- CloudWatch metrics and alarms for CPU, memory, and EC2 health checks.
+- SNS, Lambda, and SSM based Nginx remediation for CPU and memory alarms.
+- A scheduled Health Manager that checks EC2 status and the application health endpoint, then can attempt an EC2 reboot or Nginx restart.
+- EventBridge lifecycle logging and periodic CPU/memory trend analysis, with optional Discord alerts.
+- Cognito sign-in and API Gateway JWT authorization for dashboard API routes.
+- A React dashboard for uptime, CPU and memory graphs, audit events, recovery state, and maintenance mode.
+- A Fieldwork demo storefront with static product cards, search, category filters, browser-local cart state, and simulated checkout. No commerce data is persisted.
+- DynamoDB audit/state tables and S3 audit objects.
+
+## Current limitations
+
+- Single EC2 web origin; this is not a production high-availability design.
+- CloudFront uses HTTPS for viewers but currently connects to the EC2 origin over HTTP; the EC2 host also allows direct HTTP access.
+- The Health Manager and alarm paths are separate. The alarm called auto-recovery currently notifies SNS; the scheduled Health Manager handles reboot attempts after checking instance health.
+- The API computes a custom health score, but the dashboard does not yet display it.
+- The storefront is a static portfolio UI. It has no commerce API, persistent cart/orders, inventory, payment processing, or newsletter storage. Checkout is simulated only.
+
+## Success criteria
+
+- Local unit tests cover maintenance input validation, safe error responses, and health-score behavior.
+- The frontend builds and passes lint checks.
+- In a test deployment, operators can verify authorization, alarms, remediation attempts, and audit records.
+- The portfolio demo clearly explains what is implemented, what is simulated, and what remains unverified.
