@@ -1,0 +1,8 @@
+{
+  "package": "store-api-health-monitor-2026-10-17.zip",
+  "sha256": "f2d93824fafa27d85206829575eb7e1668ebe8f33f7a0fdd550e9d76eca2c28b",
+  "handler": "health_manager.handler",
+  "health_path": "/store-api/health",
+  "application_mode": "monitoring only",
+  "deployed": false
+}

@@ -1,5 +1,25 @@
 # Architectural Decision Records
 
+## ADR 12: Opt-in guarded recovery of a stopped Store API
+
+**Decision (2026-10-17):** Extend actual Store API health monitoring with an opt-in asynchronous SSM workflow. Conditional DynamoDB versions reserve dispatches; cooldowns and a three-command budget bound attempts. On EC2, a fixed locked script starts only an enabled inactive/failed Store API. The idempotent start does not interrupt an API that became active concurrently. Read the command outcome later and require the real proxy health check before reporting verified recovery.
+
+**Reason:** The user asked for targeted application recovery. Systemd already handles ordinary process crashes. A failed proxy probe does not justify restarting an active Node service or Nginx; ambiguous SSM outcomes must not create repeated root commands.
+
+**Tradeoffs:** Recovery takes scheduled checks, not an immediate synchronous action. Uncertain dispatch/results require review. Application maintenance requires disabling the explicit recovery flag; the existing alarm-only Maintenance toggle does not pause this workflow. Dependency/hung-process repair and Nginx/network failures remain manual follow-up. EC2 health checks are alert-only; no instance reboot is selected.
+
+**Status:** Prepared and verified locally with 47 Lambda tests, including seven simulated shell scenarios. ZIP is owner-uploadable; live recovery remains disabled until `APP_RECOVERY_ENABLED=true` is explicitly set. Deployment and outage validation remain owner-run; see `STORE_API_RECOVERY.md`.
+
+## ADR 11: Batched Store API metrics using the EC2 role
+
+**Decision (2026-10-17):** Publish opt-in minute batches of aggregate Store API requests, 4xx/5xx counts, collection duration and response duration to `Fieldwork/StoreApi` through the AWS SDK. Keep fixed Service/InstanceId dimensions. Read them through the existing protected CloudOps status endpoint and display measured averages and collection gaps.
+
+**Reason:** The user requested application-specific monitoring while CloudFront verification is pending. Direct batching reuses the instance role and preserves the existing CloudWatch Agent configuration. It avoids an extra StatsD listener or log-forwarder deployment for this first iteration.
+
+**Tradeoffs:** Five custom metric series and read/write requests can incur charges. Minute aggregation and warm-Lambda caching add reporting delay. This is API activity, not unique-user tracking or browser latency. Failed publishing leaves missing intervals. No application remediation or error-rate alarms are enabled by this preparation.
+
+**Status:** Implemented/tested locally; owner deployment and live metric validation remain pending in `STORE_API_MONITORING.md`.
+
 ## ADR 1: Lambda and API Gateway for the dashboard API
 
 **Decision:** Use AWS Lambda behind API Gateway rather than a persistent Flask/Django service on EC2.
@@ -48,40 +68,56 @@
 
 **Status:** Configured in Terraform; owner-run AWS verification is pending.
 
-## ADR 6: Commerce data store is not yet selected
+## ADR 6: DynamoDB is the commerce data store
 
-**Decision:** Do not extend the operational DynamoDB tables for commerce until product type, user flows, and query patterns are defined.
+**Decision:** Use a dedicated DynamoDB table as the source of truth for the physical-product catalog, inventory, and customer orders. Keep commerce records separate from the existing CloudOps operational state and audit tables.
 
-**Reason:** Orders, inventory, product browsing, and customer order history may need different access patterns from operational logs.
+**Reason:** The Storefront has known key-based access patterns and needs durable order history, customer ownership queries, persistent idempotency, and atomic inventory acceptance. DynamoDB supports these without a database server or VPC.
 
-**Status:** Pending Phase 1 of `PRODUCT_ROADMAP.md`.
+**Tradeoffs:** Access patterns and indexes must be designed up front, and flexible joins or ad-hoc relational reporting would require a different data model. Capacity, storage, indexes, backups, and data transfer can incur charges.
 
-## ADR 7: Two separate frontends and demo checkout
+**Status:** Implemented locally. The Store API defaults to the DynamoDB repository with persistent idempotency, conditional writes, and atomic acceptance/inventory transactions. Owner-run table creation, catalog seed, and live restart verification remain pending until AWS project verification completes.
 
-**Decision:** Build exactly two independent frontends: a public Fieldwork storefront and a Cognito-protected CloudOps operator dashboard. Keep checkout simulated and do not collect payment details.
+## ADR 7: Exactly two frontends with distinct user experiences
 
-**Reason:** The operator console is a distinct audience and trust boundary from the public storefront.
+The separate-pool authentication part of this original decision is superseded by ADR 10 at the user's request. The two frontend applications remain.
 
-**Tradeoffs:** Separate deployment origins and Cognito callback updates are required. The current storefront is still static and has no persistent commerce API.
+**Decision:** Keep exactly two frontends: the Fieldwork Storefront and the CloudOps operations dashboard. The Storefront includes customer sign-in, browsing and cart flows, saved order history, and a separate admin sign-in experience and interface. Use a Storefront Cognito user pool with an admin authorization group, separate from the existing CloudOps operator pool. Do not collect payment details or process payments in this scope.
 
-**Status:** Frontend split implemented locally; AWS migration pending.
+**Reason:** Customers and store administrators use one commercial application with different permissions; CloudOps operators remain a separate audience and trust boundary.
 
-## ADR 8: RDS is the commerce source of truth; Redis-compatible cache is disposable
+**Tradeoffs:** Storefront APIs must validate Cognito tokens, enforce customer order ownership, and require the admin group for administrative operations. Separate deployment origins and Cognito callback updates are required. The current storefront has no persistent commerce API.
 
-**Decision:** Use RDS for PostgreSQL for catalog and demo orders, and ElastiCache Valkey for disposable catalog cache data. Keep operational audit/state in DynamoDB.
+**Status:** Frontend split, Storefront Cognito integration code, customer order-history, and admin order-management pages are implemented locally. Owner-run Cognito configuration and live customer/admin authorization tests are complete; durable repository code is ready and awaits the owner-created DynamoDB table and live restart proof.
 
-**Reason:** Commerce queries and order consistency are relational; operational records have separate key-based access patterns. Cache loss must not lose orders.
+## ADR 8: Customers can cancel pending orders; admins control other order changes
 
-**Tradeoffs:** Both services add cost and private-networking requirements. Review the Terraform plan and current regional pricing before deployment.
+**Decision:** A submitted order starts in `REQUESTED`. A customer can cancel only their own `REQUESTED` order from the Storefront account area. Customers cannot edit orders. Admins handle other order changes and decide whether to accept an order. Inventory is not decremented when an order is requested; acceptance must recheck availability and update inventory and order state atomically. No payment step is included.
 
-**Status:** Target decision; implementation pending.
+**Reason:** Customers can withdraw an unaccepted request while administrators retain control of fulfillment decisions and inventory changes.
 
-## ADR 9: ALB and EC2 Auto Scaling Group for the Store API
+**Tradeoffs:** The API must enforce ownership and state transitions on every request. Concurrent acceptances need transaction conflict handling so inventory cannot be oversold.
 
-**Decision:** Place the Store API behind an Application Load Balancer and a multi-AZ Auto Scaling Group. Allow inbound instance traffic only from the ALB security group. Use ALB health checks and Auto Scaling replacement for unhealthy instances; scale out under sustained load.
+**Status:** The Store API rule contract and Storefront customer/admin controls are implemented locally. Durable DynamoDB persistence awaits the owner-created table and live proof.
 
-**Reason:** A real storefront API workload can exercise CPU/memory alarms and scaling while preserving the existing recovery demonstration.
+## ADR 9: Defer cache, load balancing, and automatic scaling until justified
 
-**Tradeoffs:** Requires a multi-subnet network and launch-template/bootstrap automation. High CPU should trigger scale-out rather than repeatedly restarting healthy services.
+**Decision:** Do not add Redis/Valkey, an Application Load Balancer, or an EC2 Auto Scaling Group to the initial commerce implementation. Reconsider each service if measured performance or an explicit availability requirement justifies it. If EC2-based multi-AZ serving is later selected, use an ALB for routing and health checks and an Auto Scaling Group for instance replacement and scaling.
 
-**Status:** Target decision; implementation pending.
+**Reason:** The current project is small, and the existing CloudOps dashboard already provides a foundation for observing its resources. Additional services should address measured needs.
+
+**Tradeoffs:** Deferring these services avoids their hourly, request, and networking costs now. A single-instance API would have limited availability and scaling until a later architecture change.
+
+**Status:** Deferred pending workload and availability evidence.
+
+## ADR 10: Reuse the Storefront administrator sign-in for CloudOps
+
+**Decision (2026-10-16, user-requested):** Use the existing Storefront Cognito pool and public app client as the shared identity for both applications. An administrator who opens CloudOps from the Storefront continues the existing managed-login session through an automatic `prompt=none` authorization-code/PKCE flow. No second password form is shown while that Cognito session is valid.
+
+**Reason:** The user wants Storefront administrators to open the operations dashboard directly after their initial admin sign-in. Separate identity pools required a second operator login and duplicate user/group setup.
+
+**Controls:** Keep two frontend origins and their separate session storage. Navigation carries only an `sso=storefront` intent, never tokens or credentials. CloudOps receives its own tokens from Cognito and still requires server approval and the exact `store-admin` group before showing data or controls. Customers cannot gain access by opening the URL or adding the SSO marker. An expired Cognito session returns to the Storefront login rather than making the dashboard public.
+
+**Tradeoffs and owner migration:** Approved Storefront administrators also become CloudOps operators. The owner must deploy the Lambda group checks before changing the API JWT authorizer to trust the Storefront pool/client, add CloudOps callback/logout URLs to the existing Storefront app client, and deploy the frontend changes. The legacy CloudOps pool remains intact; no identity resources are deleted or changed by the assistant. The previous group setup in that pool is not the identity source for this new flow.
+
+**Status:** Implemented locally; 29 mocked browser scenarios, 20 backend tests, both frontend builds/type checks, and lint passed (only the existing four component-export warnings). Terraform CLI was unavailable for validation. AWS activation is owner-run and still pending; see `CLOUDOPS_SSO_SETUP.md`.

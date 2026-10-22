@@ -1,0 +1,4 @@
+# Owner-reviewed SSO migration inputs; this example is not auto-applied.
+# The Storefront public client must first allow the CloudOps callback/logout URLs.
+cloudops_shared_cognito_user_pool_id = "us-east-1_vP8QkD0ry"
+cloudops_shared_cognito_client_id    = "5oumcah9a3gtomb24unutar9d9"

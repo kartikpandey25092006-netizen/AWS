@@ -1,0 +1,8 @@
+{
+  "package": "cloudops-application-metrics-api-2026-10-17.zip",
+  "sha256": "640d3a3eb7b053a9c2d6b64c5dddaa26960909d8d83e3fd8dd18993d1cbd4bc9",
+  "files": {
+    "api.py": "1cd5f4ce5f8d9463918607976e99d3621bdf98fc3f8a95f0dc227c645ba8a612"
+  },
+  "deployed": false
+}

@@ -14,10 +14,28 @@ variable "project_name" {
   default     = "self-healing"
 }
 
+variable "cloudops_shared_cognito_user_pool_id" {
+  description = "Existing Storefront Cognito pool to trust for administrator SSO. Supply together with the shared client ID; null retains the legacy operator identity."
+  type        = string
+  default     = null
+}
+
+variable "cloudops_shared_cognito_client_id" {
+  description = "Existing Storefront public app client accepted by CloudOps after the owner enables shared administrator SSO."
+  type        = string
+  default     = null
+}
+
 variable "instance_type" {
   description = "EC2 instance type for the demo web server. Review current account and regional pricing before deployment."
   type        = string
   default     = "t3.micro"
+}
+
+variable "store_dynamodb_table_name" {
+  description = "Existing DynamoDB table used by the Fieldwork Store API."
+  type        = string
+  default     = "fieldwork-store-commerce"
 }
 
 variable "cpu_threshold" {

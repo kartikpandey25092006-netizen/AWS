@@ -1,0 +1,17 @@
+{
+  "package": "store-api-restricted-recovery-2026-10-18.zip",
+  "handler": "health_manager.handler",
+  "runtime": "python3.12",
+  "contents": [
+    "health_manager.py"
+  ],
+  "source_sha256": "764dc34852323933dcc60b09d97f7f77c61494eb35d15a3718c89bcdf783ff6b",
+  "zip_sha256": "13a7532f6f5aabfff1fc8019ab93221d9b7fd679f1ef544ef8e2e11aecaaef67",
+  "ssm_document_name": "self-healing-start-store-api",
+  "ssm_document_source": "store_api_recovery_document.json",
+  "ssm_document_sha256": "a9306af4c5e1de05cd7e230e66215bfdb76417f620d1c5b8b6774020142c0889",
+  "required_environment_variable": "STORE_API_RECOVERY_DOCUMENT=self-healing-start-store-api",
+  "preserve_existing_environment": true,
+  "tests_run": false,
+  "deployed": false
+}

@@ -1,0 +1,8 @@
+{
+  "package": "cloudops-lambda-web-metrics-2026-10-22.zip",
+  "sha256": "801ad448e3c2b3bb3eccdb4086d3f2c3a46afa16aa7720adfd70ac0f1e952e62",
+  "files": {
+    "api.py": "8e9f4f6cdf7d49cb926390414463d9c56f6d5a6e39955e108b8e98daa791be8e"
+  },
+  "deployed": false
+}

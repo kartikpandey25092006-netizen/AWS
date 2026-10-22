@@ -1,0 +1,10 @@
+{
+  "handler": "health_manager.handler",
+  "contents": [
+    "health_manager.py"
+  ],
+  "source_sha256": "48142030ae967f3ddf634e85d3583f16890b8a45349906aaa76a5bc9f53df81d",
+  "zip_sha256": "6c770737ad28ade74260f8961426301dc997eba030b11fb6b72ea4444fbf269c",
+  "ec2_health_mode": "alert-only",
+  "store_api_recovery_document": "self-healing-start-store-api"
+}\n

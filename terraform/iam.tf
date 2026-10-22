@@ -57,6 +57,33 @@ resource "aws_iam_role_policy" "ec2_s3_read" {
   })
 }
 
+resource "aws_iam_role_policy" "ec2_store_dynamodb" {
+  name = "${var.project_name}-ec2-store-dynamodb"
+  role = aws_iam_role.ec2_ssm_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "StoreCommerceTableAccess"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:BatchGetItem",
+          "dynamodb:DescribeTable",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:Query",
+          "dynamodb:UpdateItem"
+        ]
+        Resource = [
+          data.aws_dynamodb_table.store_commerce.arn,
+          "${data.aws_dynamodb_table.store_commerce.arn}/index/*"
+        ]
+      }
+    ]
+  })
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # IAM – Lambda Execution Role  (least privilege)
@@ -104,13 +131,6 @@ resource "aws_iam_role_policy" "lambda_permissions" {
         Effect   = "Allow"
         Action   = ["s3:PutObject"]
         Resource = "${aws_s3_bucket.audit_logs.arn}/*"
-      },
-      # 3. SSM – send commands and get command invocation details
-      {
-        Sid      = "SSMCommand"
-        Effect   = "Allow"
-        Action   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
-        Resource = "*"
       },
       # 4. DynamoDB – write audit logs
       {
@@ -247,7 +267,7 @@ resource "aws_iam_role_policy" "health_manager_permissions" {
       {
         Sid    = "DynamoDBAccess"
         Effect = "Allow"
-        Action = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem"]
+        Action = ["dynamodb:PutItem", "dynamodb:GetItem"]
         Resource = [
           aws_dynamodb_table.audit_logs.arn,
           aws_dynamodb_table.state_table.arn
@@ -255,15 +275,27 @@ resource "aws_iam_role_policy" "health_manager_permissions" {
       },
       # 3. EC2 and SSM
       {
-        Sid    = "EC2SSMAccess"
+        Sid    = "EC2Read"
         Effect = "Allow"
         Action = [
           "ec2:DescribeInstances",
-          "ec2:DescribeInstanceStatus",
-          "ec2:RebootInstances",
-          "ssm:SendCommand",
-          "ssm:GetCommandInvocation"
+          "ec2:DescribeInstanceStatus"
         ]
+        Resource = "*"
+      },
+      {
+        Sid    = "SendProjectRecoveryCommand"
+        Effect = "Allow"
+        Action = ["ssm:SendCommand"]
+        Resource = [
+          aws_instance.web_server.arn,
+          aws_ssm_document.store_api_recovery.arn
+        ]
+      },
+      {
+        Sid      = "ReadCommandResult"
+        Effect   = "Allow"
+        Action   = ["ssm:GetCommandInvocation"]
         Resource = "*"
       },
       # 4. SNS Publish

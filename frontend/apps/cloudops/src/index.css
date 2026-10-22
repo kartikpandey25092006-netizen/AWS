@@ -121,6 +121,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   transition: background-color 0.5s ease, color 0.5s ease;
@@ -166,6 +167,7 @@ h1, h2, h3, h4, h5, h6, .status-value, .badge {
 /* Glassmorphism Utilities */
 .glass-panel {
   background: var(--bg-card);
+  color: var(--text-primary);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-glass);

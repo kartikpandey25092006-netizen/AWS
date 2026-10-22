@@ -1,0 +1,37 @@
+{
+  "package": "fieldwork-storefront-2026-10-17.zip",
+  "sha256": "9D8F0DFF95745F9D3CD1F5B0FEC404B755719D26C9B4A9CD3D69C2EBB4D1923B",
+  "files": [
+    "assets/dm-sans-latin-ext-wght-normal-BOFOeGcA.woff2",
+    "assets/dm-sans-latin-wght-normal-Xz1IZZA0.woff2",
+    "assets/ibm-plex-sans-cyrillic-ext-wght-normal-d45eAU9y.woff2",
+    "assets/ibm-plex-sans-cyrillic-wght-normal-BAAhND-U.woff2",
+    "assets/ibm-plex-sans-greek-wght-normal-CmyJS8uq.woff2",
+    "assets/ibm-plex-sans-latin-ext-wght-normal-CIII54If.woff2",
+    "assets/ibm-plex-sans-latin-wght-normal-IvpUvPa2.woff2",
+    "assets/ibm-plex-sans-vietnamese-wght-normal-Dg1JeJN0.woff2",
+    "assets/index-Bb_BCWsd.js",
+    "assets/index-DB3XIeuN.css",
+    "index.html"
+  ],
+  "targetBucket": "fieldwork-storefront-325381793128",
+  "apiBase": "/store-api",
+  "cloudOpsUrlConfigured": false,
+  "verification": "TypeScript/build passed; lint existing warnings only; archive bytes matched build files; live CloudFront homepage and six-product API catalog verified on 2026-10-19",
+  "cloudFrontDistributionId": "EXOWA1YGQR32N",
+  "cloudFrontDomain": "d3bswlvyu1uaz.cloudfront.net",
+  "liveApiBehavior": {
+    "pathPattern": "/store-api/api/products*",
+    "origin": "ec2-3-89-204-132.compute-1.amazonaws.com",
+    "methods": ["GET", "HEAD", "OPTIONS"],
+    "cachePolicy": "CachingDisabled",
+    "note": "Catalog-only over HTTP origin; protected API methods are not routed."
+  },
+  "pending": [
+    "HTTPS EC2 origin before protected API routes",
+    "SPA deep-link routing without rewriting API errors",
+    "Cognito HTTPS callback/logout allowlist",
+    "separate CloudOps HTTPS URL and rebuild",
+    "reconcile manually created CloudFront distribution with Terraform"
+  ]
+}

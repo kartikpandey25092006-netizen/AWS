@@ -5,6 +5,7 @@ import { AuthProvider } from 'react-oidc-context'
 import { WebStorageStateStore } from 'oidc-client-ts'
 import App from './App.tsx'
 import { ErrorBoundary } from './ErrorBoundary.tsx'
+import { StorefrontSession } from './StorefrontSession.tsx'
 import ConstellationGrid from './components/ui/constellation-grid.tsx'
 import './index.css'
 
@@ -45,7 +46,7 @@ if (!authority || !clientId) {
           stateStore={new WebStorageStateStore({ store: window.sessionStorage })}
           onSigninCallback={() => window.history.replaceState({}, document.title, window.location.pathname)}
         >
-          <ConstellationGrid /><App />
+          <StorefrontSession><ConstellationGrid /><App /></StorefrontSession>
         </AuthProvider>
       </ErrorBoundary>
     </StrictMode>,

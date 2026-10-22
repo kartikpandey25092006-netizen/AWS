@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Guarded start and local health verification for the Fieldwork Store API.",
+  "parameters": {},
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "GuardedStoreApiStart",
+      "precondition": {
+        "StringEquals": ["platformType", "Linux"]
+      },
+      "inputs": {
+        "timeoutSeconds": "40",
+        "runCommand": [
+          "set -eu\nexec 9>/run/fieldwork-store-api-recovery.lock\nflock -n 9 || { echo STORE_API_BUSY; exit 0; }\n[ \"$(systemctl show fieldwork-store-api -p LoadState --value)\" = loaded ] || exit 10\nsystemctl is-enabled --quiet fieldwork-store-api || { echo STORE_API_DISABLED; exit 0; }\nservice_state=$(systemctl show fieldwork-store-api -p ActiveState --value)\ncase \"$service_state\" in\n  active) echo STORE_API_ACTIVE; exit 0 ;;\n  inactive|failed)\n    if [ \"$service_state\" = failed ]; then systemctl reset-failed fieldwork-store-api; fi\n    timeout 12 systemctl start fieldwork-store-api\n    for check_number in 1 2 3 4 5; do\n      if systemctl is-active --quiet fieldwork-store-api; then\n        if body=$(curl --fail --silent --max-time 2 http://127.0.0.1:3100/health); then\n          if printf '%s' \"$body\" | /usr/bin/node-22 -e 'let b=\"\";process.stdin.on(\"data\",c=>b+=c);process.stdin.on(\"end\",()=>{try{process.exit(JSON.parse(b).status===\"ok\"?0:1)}catch{process.exit(1)}})'; then\n            echo STORE_API_STARTED; exit 0\n          fi\n        fi\n      fi\n      sleep 1\n    done\n    exit 11 ;;\n  *) echo STORE_API_BUSY; exit 0 ;;\nesac"
+        ]
+      }
+    }
+  ]
+}

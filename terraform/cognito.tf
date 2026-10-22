@@ -57,12 +57,16 @@ resource "aws_cognito_user_pool_client" "client" {
 
   callback_urls = [
     "https://${aws_cloudfront_distribution.frontend.domain_name}/",
-    "http://localhost:5173/"
+    "http://localhost:5173/",
+    "http://localhost:5174/",
+    "http://127.0.0.1:5174/"
   ]
 
   logout_urls = [
     "https://${aws_cloudfront_distribution.frontend.domain_name}/",
-    "http://localhost:5173/"
+    "http://localhost:5173/",
+    "http://localhost:5174/",
+    "http://127.0.0.1:5174/"
   ]
 
 

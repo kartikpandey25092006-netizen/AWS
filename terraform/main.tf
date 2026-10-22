@@ -37,6 +37,12 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
+# The commerce table was created and verified by the project owner before
+# Batch 3A. Reference it without attempting to recreate or import it.
+data "aws_dynamodb_table" "store_commerce" {
+  name = var.store_dynamodb_table_name
+}
+
 # ── Latest Amazon Linux 2023 AMI via SSM Parameter Store ──────────────────
 data "aws_ssm_parameter" "al2023_ami" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"

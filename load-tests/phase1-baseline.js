@@ -11,7 +11,7 @@ import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 
 // ── Configuration ────────────────────────────────────────────
-const TARGET = __ENV.TARGET_URL;
+const TARGET = __ENV.TARGET_URL?.replace(/\/+$/, '');
 if (!TARGET) throw new Error('Set TARGET_URL to the HTTPS CloudFront URL for the deployment under test.');
 
 // Custom metrics
@@ -42,8 +42,17 @@ export default function () {
   errorRate.add(mainPage.status !== 200);
   latency.add(mainPage.timings.duration);
 
-  // 2. Hit the health endpoint
-  const health = http.get(`${TARGET}/health`);
+  // Storefront loads its catalog from the Store API on the monitored EC2.
+  // The CloudFront /store-api/* behavior must forward requests without caching.
+  const catalog = http.get(`${TARGET}/store-api/api/products`);
+  check(catalog, {
+    'catalog status 200': (r) => r.status === 200,
+    'catalog has products': (r) => r.body && r.body.includes('products'),
+  });
+  errorRate.add(catalog.status !== 200);
+  latency.add(catalog.timings.duration);
+
+  const health = http.get(`${TARGET}/store-api/health`);
   check(health, {
     'health endpoint status 200': (r) => r.status === 200,
   });

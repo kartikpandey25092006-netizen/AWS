@@ -17,10 +17,30 @@ export class StoreError extends Error {
   }
 }
 
+function copy(value) {
+  return value === undefined ? undefined : structuredClone(value)
+}
+
+function orderIdempotencyKey(customerSub, idempotencyKey) {
+  return `${customerSub}\u0000${idempotencyKey}`
+}
+
+function hasCompleteShippingAddress(address) {
+  return Boolean(
+    address &&
+    address.recipientName &&
+    address.addressLine1 &&
+    address.locality &&
+    address.postalCode &&
+    address.countryCode,
+  )
+}
+
 export class MemoryStore {
   constructor(products = seedProducts) {
     this.products = new Map(products.map((product) => [product.id, { ...product }]))
-    this.ordersByKey = new Map()
+    this.ordersById = new Map()
+    this.orderIdsByIdempotencyKey = new Map()
   }
 
   async listProducts() {
@@ -36,26 +56,26 @@ export class MemoryStore {
     return { ...publicProduct, inStock: stock > 0 }
   }
 
-  async createOrder(items, idempotencyKey) {
-    const existing = this.ordersByKey.get(idempotencyKey)
-    if (existing) return { order: existing, created: false }
+  async createOrder(customerSub, items, idempotencyKey, shippingAddress) {
+    const scopedKey = orderIdempotencyKey(customerSub, idempotencyKey)
+    const existingOrderId = this.orderIdsByIdempotencyKey.get(scopedKey)
+    if (existingOrderId) {
+      return { order: copy(this.ordersById.get(existingOrderId)), created: false }
+    }
 
-    const selected = []
-    for (const item of items) {
-      const product = this.products.get(item.productId)
-      if (!product || !product.active) {
-        throw new StoreError(404, 'PRODUCT_NOT_FOUND', 'One or more products are unavailable.')
+    const selected = this.#selectProducts(items)
+    for (const { product, quantity } of selected) {
+      if (product.stock < quantity) {
+        throw new StoreError(409, 'INSUFFICIENT_STOCK', 'Requested quantity is currently unavailable.')
       }
-      if (product.stock < item.quantity) {
-        throw new StoreError(409, 'INSUFFICIENT_STOCK', 'Requested quantity is unavailable.')
-      }
-      selected.push({ product, quantity: item.quantity })
     }
 
     const order = {
       id: randomUUID(),
-      status: 'PLACED',
+      customerSub,
+      status: 'REQUESTED',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       totalCents: selected.reduce((total, entry) => total + entry.product.priceCents * entry.quantity, 0),
       items: selected.map(({ product, quantity }) => ({
         productId: product.id,
@@ -64,10 +84,117 @@ export class MemoryStore {
         unitPriceCents: product.priceCents,
         lineTotalCents: product.priceCents * quantity,
       })),
+      shippingAddress: copy(shippingAddress) ?? null,
     }
 
+    // Requests do not reserve or decrement inventory. Stock is checked again at acceptance.
+    this.ordersById.set(order.id, order)
+    this.orderIdsByIdempotencyKey.set(scopedKey, order.id)
+    return { order: copy(order), created: true }
+  }
+
+  async getOrdersForCustomer(customerSub) {
+    return [...this.ordersById.values()]
+      .filter((order) => order.customerSub === customerSub)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map(copy)
+  }
+
+  async getOrderForCustomer(orderId, customerSub) {
+    const order = this.ordersById.get(orderId)
+    if (!order || order.customerSub !== customerSub) return null
+    return copy(order)
+  }
+
+  async cancelOrder(orderId, customerSub) {
+    const order = this.ordersById.get(orderId)
+    if (!order || order.customerSub !== customerSub) return null
+    if (order.status === 'CANCELLED') return copy(order)
+    if (order.status !== 'REQUESTED') {
+      throw new StoreError(409, 'ORDER_NOT_CANCELLABLE', 'Only requested orders can be cancelled.')
+    }
+    order.status = 'CANCELLED'
+    order.cancelledAt = new Date().toISOString()
+    order.updatedAt = order.cancelledAt
+    return copy(order)
+  }
+
+  async listOrdersForAdmin() {
+    return [...this.ordersById.values()]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map(copy)
+  }
+
+  async updateRequestedOrder(orderId, updates) {
+    const order = this.ordersById.get(orderId)
+    if (!order) return null
+    if (order.status !== 'REQUESTED') {
+      throw new StoreError(409, 'ORDER_NOT_EDITABLE', 'Only requested orders can be changed by an admin.')
+    }
+
+    if (updates.items) {
+      const selected = this.#selectProducts(updates.items)
+      order.items = selected.map(({ product, quantity }) => ({
+        productId: product.id,
+        name: product.name,
+        quantity,
+        unitPriceCents: product.priceCents,
+        lineTotalCents: product.priceCents * quantity,
+      }))
+      order.totalCents = order.items.reduce((total, item) => total + item.lineTotalCents, 0)
+    }
+    order.updatedAt = new Date().toISOString()
+    return copy(order)
+  }
+
+  async acceptOrder(orderId) {
+    const order = this.ordersById.get(orderId)
+    if (!order) return null
+    if (order.status === 'ACCEPTED') return { order: copy(order), accepted: false }
+    if (order.status !== 'REQUESTED') {
+      throw new StoreError(409, 'ORDER_NOT_ACCEPTABLE', 'Only requested orders can be accepted.')
+    }
+    if (!hasCompleteShippingAddress(order.shippingAddress)) {
+      throw new StoreError(409, 'SHIPPING_ADDRESS_REQUIRED', 'Add a complete shipping address before acceptance.')
+    }
+
+    const selected = this.#selectProducts(order.items)
+    for (const { product, quantity } of selected) {
+      if (product.stock < quantity) {
+        throw new StoreError(409, 'INSUFFICIENT_STOCK', 'Stock changed; this order cannot be accepted.')
+      }
+    }
+
+    // This in-memory operation has no await between checking and decrementing. The DynamoDB
+    // repository preserves the same invariant with a conditional transaction.
     for (const { product, quantity } of selected) product.stock -= quantity
-    this.ordersByKey.set(idempotencyKey, order)
-    return { order, created: true }
+    order.status = 'ACCEPTED'
+    order.acceptedAt = new Date().toISOString()
+    order.updatedAt = order.acceptedAt
+    return { order: copy(order), accepted: true }
+  }
+
+  async rejectOrder(orderId, reason) {
+    const order = this.ordersById.get(orderId)
+    if (!order) return null
+    if (order.status !== 'REQUESTED') {
+      throw new StoreError(409, 'ORDER_NOT_REJECTABLE', 'Only requested orders can be rejected.')
+    }
+    const now = new Date().toISOString()
+    order.status = 'REJECTED'
+    order.rejectionReason = reason
+    order.rejectedAt = now
+    order.updatedAt = now
+    return copy(order)
+  }
+
+  #selectProducts(items) {
+    return items.map(({ productId, quantity }) => {
+      const product = this.products.get(productId)
+      if (!product || !product.active) {
+        throw new StoreError(404, 'PRODUCT_NOT_FOUND', 'One or more products are unavailable.')
+      }
+      return { product, quantity }
+    })
   }
 }

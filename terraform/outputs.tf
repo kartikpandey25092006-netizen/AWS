@@ -110,6 +110,16 @@ output "cognito_authority" {
   value       = "https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${aws_cognito_user_pool.pool.id}"
 }
 
+output "cloudops_auth_authority" {
+  description = "Issuer trusted by the CloudOps API, including the owner-selected shared identity when SSO is enabled."
+  value       = "https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${var.cloudops_shared_cognito_user_pool_id != null ? var.cloudops_shared_cognito_user_pool_id : aws_cognito_user_pool.pool.id}"
+}
+
+output "cloudops_auth_client_id" {
+  description = "Public client trusted by CloudOps; must match the Storefront client for the shared administrator login flow."
+  value       = var.cloudops_shared_cognito_client_id != null ? var.cloudops_shared_cognito_client_id : aws_cognito_user_pool_client.client.id
+}
+
 output "admin_user_creation_command" {
   description = "AWS CLI command to create the initial dashboard operator user"
   value       = "aws cognito-idp admin-create-user --user-pool-id ${aws_cognito_user_pool.pool.id} --username admin@cloudops.internal --user-attributes Name=email,Value=admin@cloudops.internal Name=email_verified,Value=true"

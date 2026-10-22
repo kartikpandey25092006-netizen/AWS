@@ -1,0 +1,17 @@
+{
+  "package": "fieldwork-store-api-release-v4.zip",
+  "sha256": "a7d96c70294a08f82ca368b92a23d94cba6ca39bcdcf44886145ff98115de610",
+  "files": {
+    "src/app.mjs": "647ff0e655d2ec4fa91d812eb80d4c228a7ae6a8047061647741f4f8a9db2b85",
+    "src/auth.mjs": "1849efbdfd825812d60739b4d44e8213b424249cd537f13651a909dcbf195748",
+    "src/dynamodb-store.mjs": "1e0f54e7cf56018cb981a9922620feffe4c977b4b61421926c280a12fa324f28",
+    "src/memory-store.mjs": "26979a0e21b43eb6d5395f7f5e1dcfac4d347523fbf6d6d8bea60462ccd4b176",
+    "src/server.mjs": "55539a0311720f804e4fceda6b67bf60b60a72b47b83c74996a378d6aa5da5c9",
+    "src/metrics.mjs": "1775aa8141c47bc84b7b3ccded67593cc540a46da04f623a3571453604f9364b",
+    "package.json": "4f1abb7ad05c949bfd2e86fc7cd8532f444a5b1f625499ae0a53f0e4c1d8805d",
+    "package-lock.json": "47f87acc0ce5ac1d0bab4a162751d596667d9de7aad93d2b2a82968747253a1e"
+  },
+  "deployed": false,
+  "tests_run": false,
+  "change": "Pass logger to admin PATCH authentication helper; preserve 401 for missing/invalid tokens."
+}

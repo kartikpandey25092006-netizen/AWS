@@ -53,7 +53,9 @@ resource "aws_apigatewayv2_api" "frontend_api" {
   cors_configuration {
     allow_origins = [
       "https://${aws_cloudfront_distribution.frontend.domain_name}",
-      "http://localhost:5173"
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://127.0.0.1:5174"
     ]
     allow_methods = ["GET", "POST", "OPTIONS"]
     allow_headers = ["Authorization", "Content-Type"]
@@ -75,9 +77,20 @@ resource "aws_apigatewayv2_authorizer" "cognito" {
   identity_sources = ["$request.header.Authorization"]
   name             = "cognito-jwt-authorizer"
 
+  # Deploy server-side group enforcement before an owner switches the issuer
+  # to the shared Storefront pool, which also contains customer identities.
+  depends_on = [aws_lambda_function.api_handler]
+
   jwt_configuration {
-    issuer   = "https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${aws_cognito_user_pool.pool.id}"
-    audience = [aws_cognito_user_pool_client.client.id]
+    issuer   = "https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${var.cloudops_shared_cognito_user_pool_id != null ? var.cloudops_shared_cognito_user_pool_id : aws_cognito_user_pool.pool.id}"
+    audience = [var.cloudops_shared_cognito_client_id != null ? var.cloudops_shared_cognito_client_id : aws_cognito_user_pool_client.client.id]
+  }
+
+  lifecycle {
+    precondition {
+      condition     = (var.cloudops_shared_cognito_user_pool_id == null) == (var.cloudops_shared_cognito_client_id == null)
+      error_message = "Supply both shared Cognito pool and client IDs together, or leave both null to retain the legacy operator identity."
+    }
   }
 }
 
@@ -85,8 +98,17 @@ resource "aws_apigatewayv2_integration" "lambda_integration" {
   api_id           = aws_apigatewayv2_api.frontend_api.id
   integration_type = "AWS_PROXY"
 
-  integration_method = "POST"
-  integration_uri    = aws_lambda_function.api_handler.invoke_arn
+  integration_method     = "POST"
+  integration_uri        = aws_lambda_function.api_handler.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "session_route" {
+  api_id             = aws_apigatewayv2_api.frontend_api.id
+  route_key          = "GET /api/session"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
 resource "aws_apigatewayv2_route" "status_route" {

@@ -1,6 +1,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import Store from './Store.tsx'
+import { BrowserRouter } from 'react-router-dom'
+import App from './App.tsx'
+import { StoreAuthProvider } from './auth.tsx'
 import { ErrorBoundary } from './ErrorBoundary.tsx'
 import './index.css'
 
@@ -10,7 +12,11 @@ if (!rootElement) throw new Error('Missing storefront root element')
 createRoot(rootElement).render(
   <StrictMode>
     <ErrorBoundary>
-      <Store />
+      <StoreAuthProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </StoreAuthProvider>
     </ErrorBoundary>
   </StrictMode>,
 )

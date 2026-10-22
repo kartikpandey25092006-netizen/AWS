@@ -3,8 +3,8 @@ Self-Healing Lambda Function
 ─────────────────────────────
 Handles TWO event sources:
 
-1. SNS (CloudWatch Alarm) → Parses alarm, sends SSM command to restart
-   nginx, writes remediation audit log to S3.
+1. SNS alarms: CPU and memory produce operator alerts; other alarms are
+   audited as skipped. This function issues no SSM commands.
 
 2. EventBridge (EC2 State Change) → Logs instance lifecycle events
    (start, stop, terminate, reboot) to S3 for audit trail.
@@ -14,11 +14,9 @@ import json
 import os
 import datetime
 import boto3
-import time
 import urllib.request
 
 # ── Clients (initialised outside handler for connection reuse) ────────────
-ssm_client = boto3.client("ssm")
 s3_client = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 
@@ -51,7 +49,7 @@ def handler(event, context):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _handle_sns_alarm(event: dict) -> dict:
-    """Parse CloudWatch Alarm from SNS, restart nginx via SSM, write audit log."""
+    """Record resource alerts or skip unrecognized alarms without commands."""
 
     # ── 1. Parse the SNS → CloudWatch Alarm payload ──────────────────────
     try:
@@ -81,130 +79,48 @@ def _handle_sns_alarm(event: dict) -> dict:
 
     print(f"Target instance for remediation: {instance_id}")
 
-    # ── 3. Send SSM command to restart nginx or kill stress processes ──────
-    success = True
-    command_id = "N/A"
-    error_message = None
-
-    if "memory" in alarm_name.lower():
-        commands = ["sudo pkill -f stress", "sudo systemctl restart nginx"]
-        comment = f"Self-healing: kill memory hogs and restart app (alarm={alarm_name})"
-    else:
-        commands = ["sudo systemctl restart nginx"]
-        comment = f"Self-healing: restart nginx (alarm={alarm_name})"
-
-    try:
-        response = ssm_client.send_command(
-            InstanceIds=[instance_id],
-            DocumentName="AWS-RunShellScript",
-            Parameters={"commands": commands},
-            TimeoutSeconds=60,
-            Comment=comment,
+    # Resource pressure does not identify a safe process to terminate or restart.
+    metric_name = alarm_data.get("Trigger", {}).get("MetricName", "")
+    memory_alarm = metric_name == "mem_used_percent" or "memory" in alarm_name.lower()
+    cpu_alarm = metric_name == "CPUUtilization" or "cpu" in alarm_name.lower()
+    if memory_alarm or cpu_alarm:
+        resource_label = "memory" if memory_alarm else "CPU"
+        audit_prefix = "memory-alerts" if memory_alarm else "cpu-alerts"
+        timestamp = _utc_timestamp()
+        audit_entry = {
+            "event_type": "alarm",
+            "timestamp": timestamp,
+            "instance_id": instance_id,
+            "action": f"High {resource_label} alert - operator review required",
+            "alarm_name": alarm_name,
+            "alarm_reason": reason,
+            "problem": reason,
+            "outcome": "ATTENTION_REQUIRED",
+            "health_check_status": "NOT_CHECKED",
+        }
+        _write_audit_log(audit_prefix, timestamp, instance_id, audit_entry)
+        _send_discord_alert(
+            f"High {resource_label} alarm: {alarm_name}\nInstance: {instance_id}\n"
+            f"Reason: {reason[:500]}\nOperator review required. "
+            "No process was terminated and no service was restarted. "
+            f"{resource_label.capitalize()} recovery has not been verified."
         )
-        command_id = response["Command"]["CommandId"]
-        print(f"SSM SendCommand succeeded – CommandId: {command_id}")
-    except Exception as exc:
-        success = False
-        error_message = str(exc)
-        print(f"ERROR  SSM SendCommand failed: {exc}")
+        return audit_entry
 
-    # ── 4. Health Check (Wait 10s and verify Nginx) ──────────────────────
-    health_check_status = "PENDING"
-    
-    if success:
-        print("Waiting 10s before checking health...")
-        time.sleep(10)
-        try:
-            health_response = ssm_client.send_command(
-                InstanceIds=[instance_id],
-                DocumentName="AWS-RunShellScript",
-                Parameters={"commands": ["systemctl is-active --quiet nginx"]},
-                TimeoutSeconds=30,
-                Comment=f"Health check for {alarm_name}"
-            )
-            h_command_id = health_response["Command"]["CommandId"]
-            
-            # poll for result
-            for _ in range(10):
-                time.sleep(1)
-                try:
-                    invoc = ssm_client.get_command_invocation(
-                        CommandId=h_command_id,
-                        InstanceId=instance_id
-                    )
-                    status = invoc.get("Status")
-                    if status in ["Success", "Failed"]:
-                        health_check_status = "PASSED" if status == "Success" else "FAILED"
-                        break
-                except ssm_client.exceptions.InvocationDoesNotExist:
-                    # Normal during the first second or two
-                    pass
-        except Exception as exc:
-            print(f"ERROR SSM Health Check failed: {exc}")
-            health_check_status = "ERROR"
-
-    # ── 5. Write remediation audit log to S3 and DynamoDB ────────────────
     timestamp = _utc_timestamp()
     audit_entry = {
-        "event_type": "remediation",
+        "event_type": "alarm_skipped",
         "timestamp": timestamp,
         "instance_id": instance_id,
-        "action": "restart_nginx_via_ssm",
-        "command_id": command_id,
-        "success": success,
+        "action": "Unrecognized alarm skipped",
         "alarm_name": alarm_name,
         "alarm_reason": reason,
-        "health_check_status": health_check_status
+        "outcome": "SKIPPED",
+        "health_check_status": "NOT_CHECKED",
+        "reason": "No handler is configured for this alarm; no command was sent.",
     }
-    if error_message:
-        audit_entry["error"] = error_message
-
-    _write_audit_log("remediation-logs", timestamp, instance_id, audit_entry)
-
-    s3_post_mortem_key = _generate_post_mortem(
-        instance_id=instance_id,
-        alarm_name=alarm_name,
-        reason=reason,
-        action="restart_nginx_via_ssm",
-        success=success,
-        health_status=health_check_status,
-        error_msg=error_message
-    )
-
-    # Determine which metric triggered the alarm for clear messaging
-    if "memory" in alarm_name.lower() or "mem" in alarm_name.lower():
-        metric_label = "High Memory Utilization"
-        metric_emoji = "🧠"
-    elif "cpu" in alarm_name.lower():
-        metric_label = "High CPU Utilization"
-        metric_emoji = "🔥"
-    else:
-        metric_label = f"Alarm: {alarm_name}"
-        metric_emoji = "🚨"
-
-    if success and health_check_status == "PASSED":
-        _send_discord_alert(
-            f"🚨 **SYSTEM ALERT:** {metric_emoji} **{metric_label}** detected on `{instance_id}`.\n"
-            f"📊 **TRIGGER:** `{reason[:120]}`\n"
-            f"🛠️ **ACTION TAKEN:** SSM has restarted Nginx.\n"
-            f"✅ **STATUS:** Service recovered successfully.\n"
-            f"📄 **SRE POST-MORTEM:** `s3://{AUDIT_BUCKET}/{s3_post_mortem_key}`"
-        )
-    elif success:
-        _send_discord_alert(
-            f"🚨 **SYSTEM ALERT:** {metric_emoji} **{metric_label}** detected on `{instance_id}`.\n"
-            f"📊 **TRIGGER:** `{reason[:120]}`\n"
-            f"🛠️ **ACTION TAKEN:** SSM command sent, but health check is `{health_check_status}`.\n"
-            f"📄 **SRE POST-MORTEM:** `s3://{AUDIT_BUCKET}/{s3_post_mortem_key}`"
-        )
-    else:
-        _send_discord_alert(
-            f"❌ **SYSTEM FAILURE:** {metric_emoji} **{metric_label}** on `{instance_id}`.\n"
-            f"📊 **TRIGGER:** `{reason[:120]}`\n"
-            f"⚠️ **ERROR:** SSM remediation failed: {error_message}\n"
-            f"📄 **SRE POST-MORTEM:** `s3://{AUDIT_BUCKET}/{s3_post_mortem_key}`"
-        )
-
+    _write_audit_log("skipped-alarms", timestamp, instance_id, audit_entry)
+    print("Unrecognized alarm skipped; no command was sent.")
     return audit_entry
 
 
@@ -243,70 +159,6 @@ def _handle_ec2_state_change(event: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared Helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _generate_post_mortem(
-    instance_id: str,
-    alarm_name: str,
-    reason: str,
-    action: str,
-    success: bool,
-    health_status: str,
-    error_msg: str | None = None
-) -> str:
-    """Generate a Markdown Post-Mortem & Root Cause Analysis (RCA) report and save it to S3."""
-    timestamp = _utc_timestamp()
-    inc_id = f"INC-{timestamp.replace(':', '').replace('-', '')[:15]}"
-    
-    status_str = "FULLY RECOVERED" if (success and health_status == "PASSED") else "PARTIALLY RECOVERED" if success else "FAILED"
-    
-    post_mortem_md = f"""# 🚨 AUTOMATED SRE INCIDENT POST-MORTEM & RCA REPORT
-
-**Incident Reference:** `{inc_id}`  
-**Report Generated:** `{timestamp}`  
-**Impacted Resource:** `{instance_id}`  
-**Incident Severity:** HIGH (Automated Recovery Triggered)
-
----
-
-## 🔍 1. Executive Summary & Timeline
-* **Triggering Alarm:** `{alarm_name}`
-* **Alarm Description/Reason:** `{reason}`
-* **Initial Detection:** CloudWatch Metric Breach (Evaluation Period: 300s)
-* **Final Incident Status:** `{status_str}`
-
----
-
-## 🛠️ 2. Root Cause Analysis (RCA) & Automated Remediation
-* **Root Cause:** Resource threshold breach on target instance (`{instance_id}`).
-* **Remediation Action Executed:** AWS Systems Manager (SSM) command (`{action}`).
-* **Remediation Result:** `{"SUCCESS" if success else "FAILURE"}`
-* **Post-Remediation Verification:** Service Health Check `{health_status}`
-{"* **Error Details:** " + str(error_msg) if error_msg else ""}
-
----
-
-## 📊 3. SRE Reliability & MTTR Metrics
-* **MTTD (Mean Time to Detect):** ~300 Seconds
-* **MTTR (Mean Time to Recover):** ~12 Seconds
-* **Human Intervention Required:** NO (100% Automated Self-Healing)
-
----
-*Report automatically generated by Self-Healing CloudOps Infrastructure Engine.*
-"""
-
-    s3_key = f"post-mortems/{inc_id}-{instance_id}.md"
-    try:
-        s3_client.put_object(
-            Bucket=AUDIT_BUCKET,
-            Key=s3_key,
-            Body=post_mortem_md,
-            ContentType="text/markdown",
-        )
-        print(f"Post-Mortem written → s3://{AUDIT_BUCKET}/{s3_key}")
-    except Exception as exc:
-        print(f"ERROR Failed to write Post-Mortem to S3: {exc}")
-        
-    return s3_key
 
 def _send_discord_alert(message: str) -> None:
     """Send a ChatOps alert to a Discord Webhook."""

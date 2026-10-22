@@ -1,0 +1,28 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadStoreCommerce",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:325381793128:table/fieldwork-store-commerce",
+        "arn:aws:dynamodb:us-east-1:325381793128:table/fieldwork-store-commerce/index/*"
+      ]
+    },
+    {
+      "Sid": "WriteStoreOrders",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:325381793128:table/fieldwork-store-commerce"
+    }
+  ]
+}

@@ -13,7 +13,9 @@
     "lint": "oxlint apps/storefront/src apps/cloudops/src",
     "preview:storefront": "vite preview --config apps/storefront/vite.config.ts --host 127.0.0.1 --port 4173",
     "preview:cloudops": "vite preview --config apps/cloudops/vite.config.ts --host 127.0.0.1 --port 4174",
-    "test:smoke": "node scripts/smoke-frontends.cjs"
+    "test:smoke": "node scripts/smoke-frontends.cjs",
+    "test:admin-signin": "node scripts/smoke-storefront-admin-signin.cjs",
+    "test:cloudops-access": "node scripts/smoke-cloudops-access.cjs"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",
@@ -28,6 +30,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-oidc-context": "^3.3.1",
+    "react-router-dom": "^7.18.4",
     "recharts": "^3.10.1"
   },
   "devDependencies": {

@@ -1,0 +1,9 @@
+{
+  "package": "store-api-targeted-recovery-2026-10-17.zip",
+  "sha256": "02496198748150183ecd6189f74121e0944b63e4fc33077cf836480ded81f118",
+  "source_sha256": "224351356ebe1579245837f18d0b0fcc2c05824151a65347f9d54c544dda44c3",
+  "handler": "health_manager.handler",
+  "enable_flag": "APP_RECOVERY_ENABLED=true",
+  "enabled_by_default": false,
+  "deployed": false
+}

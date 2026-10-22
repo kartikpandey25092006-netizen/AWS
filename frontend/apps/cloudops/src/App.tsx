@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from 'react-oidc-context';
 import { Card } from './components/ui/card';
+import { LambdaWebMetrics, StoreMetrics, type LambdaWebMetricsData, type StoreMetricsData } from './StoreMetrics';
+import { hasAdministratorGroup } from './authorization';
 import {
   Server,
   Cpu,
@@ -46,6 +48,22 @@ interface HealthScore {
   status: string;
 }
 
+interface AdministratorAccess {
+  token: string | null;
+  status: 'pending' | 'approved' | 'denied' | 'error';
+  message: string;
+}
+
+const apiUrl = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+
+const isRecoveryRequest = (log: AuditLog) => log.event_type === 'recovery_requested';
+const isFailedEvent = (log: AuditLog) => !isRecoveryRequest(log) && (log.error != null || log.success === false);
+const eventTrigger = (log: AuditLog) => log.alarm_name || (
+  isRecoveryRequest(log) || log.action?.includes('Store API')
+    ? 'Scheduled health check'
+    : 'Health check / automation'
+);
+
 function App() {
   const auth = useAuth();
   const [theme, setTheme] = useState('dark');
@@ -53,7 +71,7 @@ function App() {
   const [history, setHistory] = useState(Array.from({ length: 20 }).map(() => ({ time: '', cpu: 0 })));
   const [currentCpu, setCurrentCpu] = useState(0);
   const [memoryHistory, setMemoryHistory] = useState(Array.from({ length: 20 }).map(() => ({ time: '', memory: 0 })));
-  const [currentMemory, setCurrentMemory] = useState(0);
+  const [currentMemory, setCurrentMemory] = useState<number | null>(null);
   const [activeGraph, setActiveGraph] = useState<'cpu' | 'memory'>('cpu');
   const [isSimulating, setIsSimulating] = useState(false);
   const [isMemorySimulating, setIsMemorySimulating] = useState(false);
@@ -66,8 +84,44 @@ function App() {
   const [healingState, setHealingState] = useState<{ [key: string]: HealingState }>({});
   const [healthScore, setHealthScore] = useState<HealthScore | null>(null);
   const [apiError, setApiError] = useState('');
+  const [storeMetrics, setStoreMetrics] = useState<StoreMetricsData | null>(null);
+  const [lambdaWebMetrics, setLambdaWebMetrics] = useState<LambdaWebMetricsData | null>(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const accessToken = auth.user?.access_token;
+  const isAdministrator = auth.isAuthenticated && hasAdministratorGroup(accessToken);
+  const [administratorAccess, setAdministratorAccess] = useState<AdministratorAccess>({ token: null, status: 'pending', message: '' });
+  const [accessRetry, setAccessRetry] = useState(0);
+  const currentAccess = administratorAccess.token === accessToken ? administratorAccess : null;
+  const canAccessCloudOps = isAdministrator && !auth.isLoading && !auth.error && currentAccess?.status === 'approved';
+
+  useEffect(() => {
+    if (auth.isLoading || auth.error || !isAdministrator || !accessToken) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        if (!apiUrl) throw new Error('CloudOps API is not configured.');
+        const response = await fetch(`${apiUrl}/api/session`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        if (response.status === 401 || response.status === 403) {
+          setAdministratorAccess({ token: accessToken, status: 'denied', message: 'Your account is not authorized to access CloudOps.' });
+          return;
+        }
+        if (!response.ok) throw new Error('Administrator verification failed.');
+        const session: unknown = await response.json();
+        if (controller.signal.aborted) return;
+        if (typeof session !== 'object' || session === null || !('role' in session) || session.role !== 'store-admin') {
+          throw new Error('Administrator verification failed.');
+        }
+        setAdministratorAccess({ token: accessToken, status: 'approved', message: '' });
+      } catch {
+        if (!controller.signal.aborted) setAdministratorAccess({ token: accessToken, status: 'error', message: 'Unable to verify administrator access. Check the CloudOps API configuration and try again.' });
+      }
+    })();
+    return () => controller.abort();
+  }, [accessToken, isAdministrator, accessRetry, auth.isLoading, auth.error]);
 
   // Theme Toggle
   useEffect(() => {
@@ -77,8 +131,8 @@ function App() {
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
   // Fetch Live Data
-  const fetchData = useCallback(async (currentRange: string) => {
-    const apiUrl = import.meta.env.VITE_API_URL;
+  const fetchData = useCallback(async (currentRange: string, signal?: AbortSignal) => {
+    if (!canAccessCloudOps || !accessToken) return;
     if (!apiUrl) {
       await Promise.resolve();
       setApiError('Live metrics are not configured. Add the API URL to the frontend environment.');
@@ -92,42 +146,51 @@ function App() {
         headers['Authorization'] = `Bearer ${accessToken}`;
       }
 
-      const res = await fetch(`${apiUrl}/api/status?time_range=${currentRange}`, { headers });
+      const res = await fetch(`${apiUrl}/api/status?time_range=${currentRange}`, { headers, signal });
+      if (signal?.aborted) return;
+      if (res.status === 401 || res.status === 403) {
+        setAdministratorAccess({ token: accessToken, status: 'denied', message: 'Your account is not authorized to access CloudOps.' });
+        return;
+      }
       if (!res.ok) {
         throw new Error(`Metrics request failed (HTTP ${res.status}).`);
       }
       const data = await res.json();
+      if (signal?.aborted) return;
       setUptime(data.uptime || 0);
       setHistory(data.cpu_history || []);
       setCurrentCpu(data.current_cpu || 0);
       setMemoryHistory(data.memory_history || []);
-      setCurrentMemory(data.current_memory || 0);
+      setCurrentMemory(typeof data.current_memory === 'number' ? data.current_memory : null);
       setIsSimulating(data.is_simulating || false);
       setIsMemorySimulating(data.is_memory_simulating || false);
       setAuditLogs(data.audit_logs || []);
       setHealingState(data.healing_state || {});
       setHealthScore(data.health_score || null);
+      setStoreMetrics(data.store_metrics || null);
+      setLambdaWebMetrics(data.lambda_web_metrics || null);
       setApiError('');
       if (!isTogglingMaintenance) {
         setMaintenanceMode(data.maintenance_mode || false);
       }
       setIsLoading(false);
     } catch {
+      if (signal?.aborted) return;
       setApiError('Unable to load live metrics. Check the API connection and try again.');
       setIsLoading(false);
     }
-  }, [accessToken, isTogglingMaintenance]);
+  }, [accessToken, isTogglingMaintenance, canAccessCloudOps]);
 
   useEffect(() => {
-    const isAuthRequired = Boolean(import.meta.env.VITE_COGNITO_AUTHORITY);
-    if (isAuthRequired && !auth.isAuthenticated) {
+    if (!canAccessCloudOps) {
       return;
     }
 
-    const initialFetch = window.setTimeout(() => void fetchData(timeRange), 0);
-    const interval = setInterval(() => void fetchData(timeRange), 10000);
-    return () => { window.clearTimeout(initialFetch); clearInterval(interval) };
-  }, [timeRange, auth.isAuthenticated, fetchData]);
+    const controller = new AbortController();
+    const initialFetch = window.setTimeout(() => void fetchData(timeRange, controller.signal), 0);
+    const interval = setInterval(() => void fetchData(timeRange, controller.signal), 10000);
+    return () => { controller.abort(); window.clearTimeout(initialFetch); clearInterval(interval) };
+  }, [timeRange, canAccessCloudOps, fetchData]);
 
   // Uptime local tick (so seconds update between polls)
   useEffect(() => {
@@ -170,9 +233,8 @@ function App() {
   };
 
   const toggleMaintenanceMode = async () => {
-    const isAuthRequired = Boolean(import.meta.env.VITE_COGNITO_AUTHORITY);
-    if (isAuthRequired && !auth.isAuthenticated) {
-      alert("Authentication required to toggle maintenance mode.");
+    if (!canAccessCloudOps || !accessToken) {
+      alert("Administrator access is required to toggle maintenance mode.");
       return;
     }
 
@@ -180,7 +242,6 @@ function App() {
     const newMode = !maintenanceMode;
     setMaintenanceMode(newMode); // Optimistic update
 
-    const apiUrl = import.meta.env.VITE_API_URL;
     if (apiUrl) {
       try {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -193,6 +254,7 @@ function App() {
           body: JSON.stringify({ maintenance: newMode })
         });
         if (!res.ok) {
+          if (res.status === 401 || res.status === 403) setAdministratorAccess({ token: accessToken, status: 'denied', message: 'Your account is not authorized to access CloudOps.' });
           console.error(`Maintenance API error: ${res.status}`);
           setMaintenanceMode(!newMode); // Revert optimistic update on 401/403/500
           alert(`Failed to update maintenance mode (HTTP ${res.status}). Authorization or server error.`);
@@ -207,8 +269,8 @@ function App() {
 
 
   const renderAuditLog = (log: AuditLog, i: number) => {
-    if (log.event_type === 'remediation') {
-      const success = log.success !== false;
+    if (log.event_type === 'remediation' || log.event_type === 'alarm' || isRecoveryRequest(log)) {
+      const success = !isFailedEvent(log);
       return (
         <div key={i} className="activity-item" style={!success ? { borderColor: 'rgba(239, 68, 68, 0.3)', background: 'rgba(239, 68, 68, 0.05)' } : {}}>
           <div className="activity-icon">
@@ -219,7 +281,7 @@ function App() {
               Self-Healing: {log.action || 'Unknown Action'}
             </span>
             <span className="activity-time">
-              {timeAgo(log.timestamp, currentTime)} • Triggered by {log.alarm_name || 'Alarm'}
+              {timeAgo(log.timestamp, currentTime)} • Triggered by {eventTrigger(log)}
             </span>
             {!success && log.error && (
               <span style={{ fontSize: '0.85rem', color: 'var(--accent-red)', marginTop: '0.25rem' }}>
@@ -262,8 +324,6 @@ function App() {
     return null;
   };
 
-  const isAuthRequired = Boolean(import.meta.env.VITE_COGNITO_AUTHORITY);
-
   // 1. Handle loading state while checking session
   if (auth.isLoading) {
     return (
@@ -278,7 +338,7 @@ function App() {
   }
 
   // 2. Handle unauthenticated state when Cognito authority is configured
-  if (isAuthRequired && !auth.isAuthenticated) {
+  if (!auth.isAuthenticated) {
     return (
       <div className="app-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
         <div className="glass-panel" style={{ padding: '3rem', textAlign: 'center', maxWidth: '480px', width: '100%' }}>
@@ -289,13 +349,52 @@ function App() {
           </p>
           <button
             className="btn"
-            onClick={() => auth.signinRedirect()}
+            onClick={() => auth.signinRedirect({ prompt: 'login' })}
             style={{ background: 'var(--accent-blue)', color: '#fff', width: '100%', justifyContent: 'center', padding: '0.85rem' }}
           >
             <LogIn size={18} /> Sign In via AWS Cognito
           </button>
         </div>
       </div>
+    );
+  }
+
+  if (!isAdministrator || currentAccess?.status === 'denied') {
+    return (
+      <main className="app-container" style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', padding: '2rem' }}>
+        <section className="glass-panel" style={{ maxWidth: '520px', padding: '2.5rem', textAlign: 'center' }}>
+          <ShieldCheck size={40} color="var(--accent-blue)" />
+          <h2>Administrator access required</h2>
+          <p style={{ color: 'var(--text-secondary)', margin: '1rem 0', lineHeight: 1.6 }}>CloudOps is available only to approved administrators. Sign in with your administrator account to continue.</p>
+          <button className="btn" onClick={() => void auth.signinRedirect({ prompt: 'login' })}><LogIn size={18} /> Admin sign in</button>
+          <button className="btn" onClick={() => void auth.removeUser()}><LogOut size={18} /> Sign out</button>
+        </section>
+      </main>
+    );
+  }
+
+  if (auth.error || currentAccess?.status === 'error') {
+    return (
+      <main className="app-container" style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', padding: '2rem' }}>
+        <section className="glass-panel" style={{ maxWidth: '520px', padding: '2.5rem', textAlign: 'center' }}>
+          <h2>Administrator access could not be verified</h2>
+          <p style={{ color: 'var(--text-secondary)', margin: '1rem 0', lineHeight: 1.6 }}>{currentAccess?.message || 'Please sign in again to verify your access.'}</p>
+          <button className="btn" onClick={() => { setAdministratorAccess({ token: accessToken || null, status: 'pending', message: '' }); setAccessRetry((value) => value + 1); }}>Try again</button>
+          <button className="btn" onClick={() => void auth.removeUser()}><LogOut size={18} /> Sign out</button>
+        </section>
+      </main>
+    );
+  }
+
+  if (!canAccessCloudOps) {
+    return (
+      <main className="app-container" style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>
+        <section className="glass-panel" style={{ padding: '2.5rem', textAlign: 'center' }}>
+          <RefreshCw size={32} className="spin" />
+          <h2>Verifying administrator access</h2>
+          <p>Checking permission to access CloudOps.</p>
+        </section>
+      </main>
     );
   }
 
@@ -372,6 +471,8 @@ function App() {
           </button>
         </div>
       </header>
+      <StoreMetrics data={storeMetrics} fetchFailed={Boolean(apiError)} />
+      <LambdaWebMetrics data={lambdaWebMetrics} fetchFailed={Boolean(apiError)} />
 
 
       <div className="bento-grid">
@@ -379,7 +480,7 @@ function App() {
           <div className="status-header"><ShieldCheck size={20} color="var(--accent-green)" /><span>Overall Health</span></div>
           <div style={{ marginTop: 'auto' }}>
             <p className="status-value">{healthScore ? `${healthScore.overall}` : '--'}<span style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}> / 100</span></p>
-            <p className="status-sub">{healthScore ? `Grade ${healthScore.grade} · ${healthScore.status}` : 'Waiting for health score'}</p>
+            <p className="status-sub">{healthScore ? `Grade ${healthScore.grade} · ${healthScore.status}` : 'Waiting for CPU and memory data'}</p>
           </div>
         </Card>
         {/* EC2 Health */}
@@ -462,17 +563,17 @@ function App() {
                 <option value="1h">Last 1 Hour</option>
                 <option value="24h">Last 24 Hours</option>
               </select>
-              <span className={`badge ${activeGraph === 'cpu' ? (isSimulating ? '' : 'healthy') : (isMemorySimulating ? '' : 'healthy')}`} style={{
+              <span className={`badge ${activeGraph === 'cpu' ? (isSimulating ? '' : 'healthy') : (currentMemory === null || isMemorySimulating ? '' : 'healthy')}`} style={{
                 background: (activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'rgba(239, 68, 68, 0.15)' : '',
-                color: (activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'var(--accent-red)' : '',
+                color: activeGraph === 'memory' && currentMemory === null ? 'var(--text-secondary)' : (activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'var(--accent-red)' : '',
                 borderColor: (activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'rgba(239, 68, 68, 0.3)' : ''
               }}>
-                {(activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'ALARM' : 'OK'}
+                {activeGraph === 'memory' && currentMemory === null ? 'NO DATA' : (activeGraph === 'cpu' && isSimulating) || (activeGraph === 'memory' && isMemorySimulating) ? 'ALARM' : 'OK'}
               </span>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-            <span className="status-value">{activeGraph === 'cpu' ? currentCpu : currentMemory}%</span>
+            <span className="status-value">{activeGraph === 'memory' && currentMemory === null ? '--' : `${activeGraph === 'cpu' ? currentCpu : currentMemory}%`}</span>
             <span className="status-sub">/ {activeGraph === 'cpu' ? '75%' : '60%'} threshold</span>
           </div>
 
@@ -487,7 +588,7 @@ function App() {
                 points={
                   activeGraph === 'cpu'
                     ? (history.length > 1 ? history.map((h, i) => `${(i / (history.length - 1)) * 100},${100 - (h.cpu || 0)}`).join(' ') : '0,100 100,100')
-                    : (memoryHistory.length > 1 ? memoryHistory.map((h, i) => `${(i / (memoryHistory.length - 1)) * 100},${100 - (h.memory || 0)}`).join(' ') : '0,100 100,100')
+                    : (memoryHistory.length > 1 ? memoryHistory.map((h, i) => `${(i / (memoryHistory.length - 1)) * 100},${100 - (h.memory || 0)}`).join(' ') : '')
                 }
                 style={{ transition: 'stroke 0.3s ease, points 0.5s ease' }}
               />
@@ -572,9 +673,9 @@ function App() {
           {(() => {
             const filteredLogs = auditLogs.filter(log => {
               if (logFilter === 'All') return true;
-              if (logFilter === 'Remediations') return log.event_type === 'remediation';
+              if (logFilter === 'Remediations') return log.event_type === 'remediation' || isRecoveryRequest(log);
               if (logFilter === 'Lifecycle') return log.event_type === 'lifecycle';
-              if (logFilter === 'Errors') return log.error != null || log.success === false;
+              if (logFilter === 'Errors') return isFailedEvent(log);
               return true;
             });
 
@@ -611,20 +712,21 @@ function App() {
             </thead>
             <tbody>
               {(() => {
-                const incidents = auditLogs.filter(log => log.error != null || log.success === false || log.event_type === 'remediation');
+                const incidents = auditLogs.filter(log => isFailedEvent(log) || log.event_type === 'alarm' || log.event_type === 'remediation' || isRecoveryRequest(log));
 
                 if (incidents.length === 0) {
                   return (
                     <tr>
                       <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
-                        No incidents recorded yet.
+                        No incidents recorded in the last 24 hours.
                       </td>
                     </tr>
                   );
                 }
 
                 return incidents.map((log, i) => {
-                  const success = log.success !== false;
+                  const pending = isRecoveryRequest(log);
+                  const success = !pending && log.success === true;
                   return (
                     <tr key={i}>
                       <td style={{ whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{timeAgo(log.timestamp, currentTime)}</td>
@@ -633,12 +735,12 @@ function App() {
                       </td>
                       <td>{log.action || 'Unknown Action'}</td>
                       <td>
-                        <span className={`badge ${success ? 'healthy' : ''}`} style={!success ? { background: 'rgba(239, 68, 68, 0.15)', color: 'var(--accent-red)', border: '1px solid rgba(239, 68, 68, 0.3)' } : {}}>
-                          {success ? 'Recovered' : 'Failed'}
+                        <span className={`badge ${success ? 'healthy' : ''}`} style={pending || log.success === undefined ? { color: 'var(--accent-blue)', border: '1px solid var(--accent-blue)' } : !success ? { background: 'rgba(239, 68, 68, 0.15)', color: 'var(--accent-red)', border: '1px solid rgba(239, 68, 68, 0.3)' } : {}}>
+                          {log.event_type === 'alarm' ? 'Attention required' : pending ? 'Requested' : success ? 'Recovered' : log.success === false ? 'Failed' : 'Unknown'}
                         </span>
                       </td>
                       <td style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                        {log.error ? log.error : (log.health_check_status ? `Health Check: ${log.health_check_status}` : 'N/A')}
+                        {log.error || log.problem || (log.health_check_status ? `Health Check: ${log.health_check_status}` : 'N/A')}
                         {log.attempt !== undefined ? ` (Attempt ${log.attempt}/3)` : ''}
                       </td>
                     </tr>

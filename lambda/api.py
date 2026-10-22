@@ -3,6 +3,7 @@ import json
 import boto3
 import datetime
 import math
+from functools import lru_cache
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key
 
@@ -14,21 +15,90 @@ dynamodb = boto3.resource("dynamodb")
 INSTANCE_ID = os.environ.get("INSTANCE_ID")
 DYNAMODB_TABLE = os.environ.get("DYNAMODB_TABLE")
 STATE_TABLE = os.environ.get("STATE_TABLE")
+LAMBDA_WEB_FUNCTION_NAME = os.environ.get("LAMBDA_WEB_FUNCTION_NAME", "fieldwork-store-api-web")
+LAMBDA_WEB_ENDPOINT_NAME = os.environ.get("LAMBDA_WEB_ENDPOINT_NAME", "storefront")
+LAMBDA_WEB_EXECUTION_REGION = os.environ.get("AWS_REGION", "us-east-1")
+
+
+def json_response(status_code, body):
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json", "Cache-Control": "no-store"},
+        "body": json.dumps(body),
+    }
+
+
+def has_admin_group(groups):
+    if isinstance(groups, str):
+        if groups == "store-admin":
+            return True
+        try:
+            groups = json.loads(groups)
+        except (TypeError, json.JSONDecodeError):
+            # HTTP API integrations can flatten group arrays to [group1 group2].
+            # Cognito group names cannot contain whitespace. Comma-separated
+            # strings are ambiguous because commas are valid in group names.
+            if not (groups.startswith("[") and groups.endswith("]")):
+                return False
+            groups = groups[1:-1].split()
+
+    # Do not split arbitrary strings on commas or use substring matching: names may
+    # contain punctuation, and lookalike group names must not grant access.
+    return (
+        isinstance(groups, list)
+        and all(isinstance(group, str) for group in groups)
+        and "store-admin" in groups
+    )
+
+
+def admin_authorization_error(event):
+    # API Gateway's JWT authorizer validates signature, issuer, audience and
+    # expiry. Browser headers, body fields and decoded JWTs are not trusted.
+    claims = event
+    for key in ("requestContext", "authorizer", "jwt", "claims"):
+        if not isinstance(claims, dict):
+            return json_response(401, {"error": "Authentication is required."})
+        claims = claims.get(key)
+
+    if (
+        not isinstance(claims, dict)
+        or not isinstance(claims.get("sub"), str)
+        or not claims["sub"].strip()
+    ):
+        return json_response(401, {"error": "Authentication is required."})
+
+    if not has_admin_group(claims.get("cognito:groups")):
+        return json_response(403, {"error": "Administrator access is required."})
+
+    return None
+
 
 def handler(event, context):
     raw_path = event.get('rawPath', '')
-    method = event.get('requestContext', {}).get('http', {}).get('method', 'GET')
+    request_context = event.get("requestContext")
+    http_context = request_context.get("http") if isinstance(request_context, dict) else None
+    method = http_context.get("method", "GET") if isinstance(http_context, dict) else "GET"
     print(f"Received API request: {method} {raw_path}")
 
     try:
-        if raw_path == "/api/maintenance":
-            if method != "POST":
-                return {
-                    "statusCode": 405,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps({"error": "Method not allowed."}),
-                }
+        route_methods = {
+            "/api/status": "GET",
+            "/api/maintenance": "POST",
+            "/api/session": "GET",
+        }
+        if raw_path not in route_methods:
+            return json_response(404, {"error": "Not found."})
+        if method != route_methods[raw_path]:
+            return json_response(405, {"error": "Method not allowed."})
 
+        authorization_error = admin_authorization_error(event)
+        if authorization_error:
+            return authorization_error
+
+        if raw_path == "/api/session":
+            return json_response(200, {"role": "store-admin"})
+
+        if raw_path == "/api/maintenance":
             try:
                 body = json.loads(event.get("body") or "")
             except (TypeError, json.JSONDecodeError):
@@ -62,20 +132,6 @@ def handler(event, context):
                 "body": json.dumps({"success": True, "maintenance": maintenance_mode, "alarms_updated": len(alarm_names)})
             }
 
-        if raw_path != "/api/status":
-            return {
-                "statusCode": 404,
-                "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"error": "Not found."}),
-            }
-
-        if method != "GET":
-            return {
-                "statusCode": 405,
-                "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"error": "Method not allowed."}),
-            }
-
         # GET /api/status
         else:
             time_range = event.get("queryStringParameters", {}).get("time_range", "40m") if event.get("queryStringParameters") else "40m"
@@ -85,6 +141,8 @@ def handler(event, context):
             memory_history, current_memory, is_memory_simulating = get_memory_metrics(INSTANCE_ID, time_range)
             audit_logs = get_audit_logs(INSTANCE_ID)
             healing_state = get_healing_state()
+            store_metrics = get_store_metrics(INSTANCE_ID)
+            lambda_web_metrics = get_lambda_web_metrics()
 
             alarms = cloudwatch.describe_alarms(AlarmNamePrefix="self-healing")["MetricAlarms"]
             maintenance_mode = any(a.get("ActionsEnabled") == False for a in alarms)
@@ -100,6 +158,8 @@ def handler(event, context):
                 "audit_logs": audit_logs,
                 "maintenance_mode": maintenance_mode,
                 "healing_state": healing_state,
+                "store_metrics": store_metrics,
+                "lambda_web_metrics": lambda_web_metrics,
                 "health_score": compute_health_score(
                     cpu=current_cpu,
                     memory=current_memory,
@@ -107,7 +167,7 @@ def handler(event, context):
                     cpu_history=cpu_history,
                     memory_history=memory_history,
                     healing_state=healing_state
-                )
+                ) if current_memory is not None else None
             }
 
             return {
@@ -127,6 +187,175 @@ def handler(event, context):
             },
             "body": json.dumps({"error": "The request could not be completed."})
         }
+
+
+def get_store_metrics(instance_id):
+    # Cache completed one-minute periods so the 10-second dashboard poll does not
+    # repeatedly query unchanged application data in a warm Lambda environment.
+    minute = int(datetime.datetime.now(datetime.timezone.utc).timestamp() // 60)
+    return _get_store_metrics(instance_id, minute)
+
+
+@lru_cache(maxsize=4)
+def _get_store_metrics(instance_id, minute):
+    empty = {"status": "no_data", "window_minutes": 5, "observed_seconds": 0,
+             "request_count": None, "requests_per_minute": None,
+             "client_errors": None, "server_errors": None,
+             "server_error_percent": None, "average_response_ms": None,
+             "last_sample": None, "instance_id": instance_id}
+    if not instance_id:
+        return empty
+    end = datetime.datetime.fromtimestamp(minute * 60, datetime.timezone.utc)
+    start = end - datetime.timedelta(minutes=5)
+    dimensions = [{"Name": "Service", "Value": "store-api"},
+                  {"Name": "InstanceId", "Value": instance_id}]
+    points = {}
+    try:
+        for name in ("RequestCount", "ClientErrorCount", "ServerErrorCount",
+                     "CollectionSeconds", "ResponseDuration"):
+            response = cloudwatch.get_metric_statistics(
+                Namespace="Fieldwork/StoreApi", MetricName=name, Dimensions=dimensions,
+                StartTime=start, EndTime=end, Period=60,
+                Statistics=["Sum", "SampleCount"],
+            )
+            points[name] = {p["Timestamp"]: p for p in response.get("Datapoints", [])
+                            if start <= p["Timestamp"] < end}
+    except Exception as error:
+        print(f"Store API metrics unavailable: {type(error).__name__}")
+        return {**empty, "status": "error"}
+
+    # Only count periods with collection evidence AND all three counters. A
+    # missing counter is never treated as zero, including during ingestion lag.
+    timestamps = set.intersection(*(set(points[name]) for name in (
+        "RequestCount", "ClientErrorCount", "ServerErrorCount", "CollectionSeconds")))
+    timestamps = {t for t in timestamps if all(
+        isinstance(points[name][t].get("Sum"), (int, float))
+        and math.isfinite(points[name][t]["Sum"]) and points[name][t]["Sum"] >= 0
+        for name in ("RequestCount", "ClientErrorCount", "ServerErrorCount", "CollectionSeconds"))
+        and 0 < points["CollectionSeconds"][t]["Sum"] <= 90}
+    if not timestamps:
+        return empty
+    total = lambda name: sum(points[name][t]["Sum"] for t in timestamps)
+    requests = total("RequestCount")
+    collected = total("CollectionSeconds")
+    latency_samples = [points["ResponseDuration"][t] for t in timestamps
+                       if t in points["ResponseDuration"]]
+    duration_count = sum(p.get("SampleCount", 0) for p in latency_samples)
+    duration_sum = sum(p.get("Sum", 0) for p in latency_samples)
+    latest = max(timestamps)
+    age_seconds = (end - latest).total_seconds()
+    return {
+        **empty,
+        "status": "stale" if age_seconds > 180 else ("available" if len(timestamps) == 5 and collected >= 270 else "partial"),
+        "observed_seconds": round(collected, 1),
+        "request_count": requests,
+        "requests_per_minute": round(requests * 60 / collected, 2),
+        "client_errors": total("ClientErrorCount"),
+        "server_errors": total("ServerErrorCount"),
+        "server_error_percent": round(total("ServerErrorCount") * 100 / requests, 2) if requests else None,
+        "average_response_ms": round(duration_sum / duration_count, 2)
+            if duration_count == requests and duration_count > 0
+            and math.isfinite(duration_sum) and duration_sum >= 0 else None,
+        "last_sample": latest.isoformat(),
+    }
+
+
+def get_lambda_web_metrics():
+    # Native Lambda Web request metrics are aggregated in completed one-minute
+    # periods. Cache by minute so the dashboard's 10-second poll does not repeat
+    # the same CloudWatch reads.
+    minute = int(datetime.datetime.now(datetime.timezone.utc).timestamp() // 60)
+    return _get_lambda_web_metrics(LAMBDA_WEB_FUNCTION_NAME, LAMBDA_WEB_ENDPOINT_NAME, minute)
+
+
+@lru_cache(maxsize=4)
+def _get_lambda_web_metrics(function_name, endpoint_name, minute):
+    end = datetime.datetime.fromtimestamp(minute * 60, datetime.timezone.utc)
+    start = end - datetime.timedelta(minutes=5)
+    dimensions = [
+        {"Name": "FunctionName", "Value": function_name},
+        {"Name": "EndpointName", "Value": endpoint_name},
+    ]
+    empty = {
+        "status": "no_data", "window_minutes": 5, "observed_seconds": 300,
+        "request_count": 0, "requests_per_minute": 0,
+        "client_errors": 0, "server_errors": 0,
+        "environment_cpu_ms": None, "peak_memory_mb": None,
+        "peak_concurrent_requests": None, "active_environments": None,
+        "endpoint_request_throttles": 0, "environment_throttles": 0,
+        "last_sample": None, "function_name": function_name,
+        "endpoint_name": endpoint_name,
+    }
+    endpoint_metrics = {
+        "ExecutedRequests": ("AWS/Lambda/Web", dimensions, "Sum"),
+        "HTTPResponseStatusClass4XX": ("AWS/Lambda/Web", dimensions, "Sum"),
+        "HTTPResponseStatusClass5XX": ("AWS/Lambda/Web", dimensions, "Sum"),
+        "EnvironmentCPUTime": ("AWS/Lambda/Web", [{"Name": "FunctionName", "Value": function_name}], "Sum"),
+        "EnvironmentMaxMemoryUsage": ("AWS/Lambda/Web", [{"Name": "FunctionName", "Value": function_name}], "Maximum"),
+        "EnvironmentConcurrentRequests": ("AWS/Lambda/Web", [{"Name": "FunctionName", "Value": function_name}], "Maximum"),
+        "EndpointActiveEnvironments": (
+            "AWS/Lambda/Web/Usage",
+            dimensions + [{"Name": "ExecutionRegion", "Value": LAMBDA_WEB_EXECUTION_REGION}],
+            "Maximum",
+        ),
+        "EndpointRequestThrottles": (
+            "AWS/Lambda/Web/Usage",
+            dimensions + [{"Name": "ExecutionRegion", "Value": LAMBDA_WEB_EXECUTION_REGION}],
+            "Sum",
+        ),
+        "EndpointActiveEnvironmentThrottles": (
+            "AWS/Lambda/Web/Usage",
+            dimensions + [{"Name": "ExecutionRegion", "Value": LAMBDA_WEB_EXECUTION_REGION}],
+            "Sum",
+        ),
+    }
+    points = {}
+    try:
+        for metric_name, (namespace, metric_dimensions, statistic) in endpoint_metrics.items():
+            response = cloudwatch.get_metric_statistics(
+                Namespace=namespace, MetricName=metric_name,
+                Dimensions=metric_dimensions, StartTime=start, EndTime=end, Period=60,
+                Statistics=[statistic],
+            )
+            points[metric_name] = [
+                point for point in response.get("Datapoints", [])
+                if start <= point["Timestamp"] < end
+                and isinstance(point.get(statistic), (int, float))
+                and math.isfinite(point[statistic]) and point[statistic] >= 0
+            ]
+    except Exception as error:
+        print(f"Lambda Web metrics unavailable: {type(error).__name__}")
+        return {**empty, "status": "error", "request_count": None,
+                "requests_per_minute": None, "client_errors": None,
+                "server_errors": None}
+
+    sum_metric = lambda name: sum(point["Sum"] for point in points[name])
+    max_metric = lambda name: max((point["Maximum"] for point in points[name]), default=None)
+    requests = sum_metric("ExecutedRequests")
+    relevant_metrics = (
+        "ExecutedRequests", "HTTPResponseStatusClass4XX", "HTTPResponseStatusClass5XX",
+        "EndpointRequestThrottles", "EndpointActiveEnvironmentThrottles",
+    )
+    datapoints = [point for metric in points.values() for point in metric]
+    has_request_or_limit_data = any(points[name] for name in relevant_metrics)
+    latest = max((point["Timestamp"] for point in datapoints), default=None)
+    cpu_points = points["EnvironmentCPUTime"]
+    cpu_time = sum_metric("EnvironmentCPUTime") if cpu_points else None
+    return {
+        **empty,
+        "status": "available" if has_request_or_limit_data or datapoints else "no_data",
+        "request_count": requests,
+        "requests_per_minute": round(requests / 5, 2),
+        "client_errors": sum_metric("HTTPResponseStatusClass4XX"),
+        "server_errors": sum_metric("HTTPResponseStatusClass5XX"),
+        "environment_cpu_ms": cpu_time,
+        "peak_memory_mb": max_metric("EnvironmentMaxMemoryUsage"),
+        "peak_concurrent_requests": max_metric("EnvironmentConcurrentRequests"),
+        "active_environments": max_metric("EndpointActiveEnvironments"),
+        "endpoint_request_throttles": sum_metric("EndpointRequestThrottles"),
+        "environment_throttles": sum_metric("EndpointActiveEnvironmentThrottles"),
+        "last_sample": latest.isoformat() if latest else None,
+    }
 
 
 def get_uptime(instance_id):
@@ -197,6 +426,12 @@ def get_cpu_metrics(instance_id, time_range="40m"):
         history = [{"time": "", "cpu": 0} for _ in range(num_points)]
         return history, 0, False
 
+@lru_cache(maxsize=8)
+def get_instance_private_dns(instance_id):
+    response = ec2.describe_instances(InstanceIds=[instance_id])
+    return response["Reservations"][0]["Instances"][0]["PrivateDnsName"]
+
+
 def get_memory_metrics(instance_id, time_range="40m"):
     try:
         end_time = datetime.datetime.now(datetime.timezone.utc)
@@ -214,10 +449,13 @@ def get_memory_metrics(instance_id, time_range="40m"):
             period = 120
             num_points = 20
         
+        # The CloudWatch Agent on this instance publishes memory with its
+        # private DNS name in the host dimension, not InstanceId.
+        instance_host = get_instance_private_dns(instance_id)
         response = cloudwatch.get_metric_statistics(
             Namespace="CWAgent",
             MetricName="mem_used_percent",
-            Dimensions=[{"Name": "InstanceId", "Value": instance_id}],
+            Dimensions=[{"Name": "host", "Value": instance_host}],
             StartTime=start_time,
             EndTime=end_time,
             Period=period,
@@ -225,6 +463,8 @@ def get_memory_metrics(instance_id, time_range="40m"):
         )
         
         datapoints = response.get("Datapoints", [])
+        if not datapoints:
+            return [], None, False
         # Sort by timestamp ascending
         datapoints.sort(key=lambda x: x["Timestamp"])
         
@@ -236,11 +476,7 @@ def get_memory_metrics(instance_id, time_range="40m"):
                 "memory": round(dp["Average"], 1)
             })
             
-        # Ensure we always have enough points for the graph by padding with 0s if needed
-        while len(history) < num_points:
-            history.insert(0, {"time": "", "memory": 0})
-            
-        # Take exactly the last num_points
+        # Return only observed samples; zero is a real metric value.
         history = history[-num_points:]
         
         current_memory = history[-1]["memory"] if history else 0
@@ -249,9 +485,7 @@ def get_memory_metrics(instance_id, time_range="40m"):
         return history, current_memory, is_memory_simulating
     except Exception as e:
         print(f"Error fetching Memory: {e}")
-        num_points = 24 if time_range == "24h" else 20
-        history = [{"time": "", "memory": 0} for _ in range(num_points)]
-        return history, 0, False
+        return [], None, False
 
 def get_audit_logs(instance_id, limit=50):
     table = dynamodb.Table(DYNAMODB_TABLE)

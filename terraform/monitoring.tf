@@ -21,6 +21,17 @@ resource "aws_sns_topic_policy" "allow_cloudwatch" {
         Principal = { Service = "cloudwatch.amazonaws.com" }
         Action    = "sns:Publish"
         Resource  = aws_sns_topic.cpu_alarm_topic.arn
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+          ArnEquals = {
+            "aws:SourceArn" = [
+              "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alarm:${var.project_name}-high-cpu",
+              "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alarm:${var.project_name}-high-memory"
+            ]
+          }
+        }
       }
     ]
   })
@@ -102,13 +113,12 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu" {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CloudWatch Alarm 2 – EC2 Auto Recovery (FREE)
-# Hardware-level: migrates instance to healthy hardware on system check fail.
+# CloudWatch Alarm 2 – EC2 system status (alert-only)
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource "aws_cloudwatch_metric_alarm" "auto_recovery" {
   alarm_name          = "${var.project_name}-auto-recovery"
-  alarm_description   = "Recovers EC2 instance when system status check fails for 2 consecutive minutes"
+  alarm_description   = "Notifies operators when EC2 system status check fails for 2 consecutive minutes; no automatic recovery action is configured"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "StatusCheckFailed_System"
@@ -164,13 +174,13 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CloudWatch Alarm 4 – StatusCheckFailed_Instance (Feature 6)
-# OS/software-level: reboots the instance on instance status check failure.
-# This catches OS-level hangs, memory exhaustion, and kernel panics.
+# OS/software-level: alerts on instance status check failure.
+# Recovery is operator-led; the Health Manager does not reboot the instance.
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource "aws_cloudwatch_metric_alarm" "instance_health" {
   alarm_name          = "${var.project_name}-instance-health"
-  alarm_description   = "Reboots EC2 instance when instance status check fails for 3 consecutive minutes"
+  alarm_description   = "Alerts when EC2 instance status check fails for 3 consecutive minutes"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
   metric_name         = "StatusCheckFailed_Instance"
@@ -184,7 +194,7 @@ resource "aws_cloudwatch_metric_alarm" "instance_health" {
     InstanceId = aws_instance.web_server.id
   }
 
-  # Notify ops (Recovery handled by Health Manager Lambda)
+  # Notify ops; no automatic EC2 reboot is configured.
   alarm_actions = [
     aws_sns_topic.ops_notifications.arn
   ]

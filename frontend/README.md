@@ -1,32 +1,29 @@
-# React + TypeScript + Vite
+# CloudOps Store frontends
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+This folder contains exactly two independently built React applications:
 
-Currently, two official plugins are available:
+- `apps/storefront`: public catalog and cart, Cognito customer sign-in, customer order history/cancellation, and the protected Storefront administrator order route.
+- `apps/cloudops`: Cognito-protected operations dashboard.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Local configuration
 
-## React Compiler
+Copy `.env.example` to `.env` and replace only the non-secret identifiers and URLs. Vite variables are shipped to the browser. Never place client secrets, passwords, access keys, session tokens, or JWTs in this file.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The Storefront remains browseable when Cognito variables are absent. Checkout, customer orders, and admin orders fail closed with a configuration message. The Store API defaults to `http://127.0.0.1:3100` for local development.
 
-## Expanding the Oxlint configuration
+## Commands
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+Run from this directory:
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```powershell
+npm ci
+npm run dev:storefront
+npm run dev:cloudops
+npm run build
+npm run lint
+npm run test:smoke
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The development servers use ports 5173 and 5174. The preview servers used by the smoke test use ports 4173 and 4174. On this Windows host, set `PUPPETEER_EXECUTABLE_PATH` to the installed Edge executable when Puppeteer's bundled Chrome is unavailable.
+
+The browser smoke test mocks only the public product response. Live Cognito customer/admin flows require the owner-run Storefront Cognito configuration described in `../docs/IMPLEMENTATION_BATCHES.md`.

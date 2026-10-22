@@ -6,7 +6,16 @@
   "scripts": {
     "start": "node src/server.mjs",
     "dev": "node --watch src/server.mjs",
+    "seed:dynamodb": "node scripts/seed-dynamodb.mjs",
+    "verify:dynamodb": "node scripts/verify-dynamodb-persistence.mjs",
     "test": "node --test",
-    "lint": "node --check src/app.mjs && node --check src/memory-store.mjs && node --check src/server.mjs"
+    "lint": "node --check src/app.mjs && node --check src/auth.mjs && node --check src/lex-chat.mjs && node --check src/memory-store.mjs && node --check src/dynamodb-store.mjs && node --check src/metrics.mjs && node --check src/server.mjs && node --check scripts/seed-dynamodb.mjs && node --check scripts/verify-dynamodb-persistence.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch": "3.1150.0",
+    "@aws-sdk/client-dynamodb": "^3.1150.0",
+    "@aws-sdk/client-lex-runtime-v2": "3.1150.0",
+    "@aws-sdk/lib-dynamodb": "^3.1150.0",
+    "aws-jwt-verify": "^5.2.1"
   }
 }

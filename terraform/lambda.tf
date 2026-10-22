@@ -85,10 +85,12 @@ resource "aws_lambda_function" "health_manager" {
 
   environment {
     variables = {
-      STATE_TABLE   = aws_dynamodb_table.state_table.name
-      AUDIT_TABLE   = aws_dynamodb_table.audit_logs.name
-      OPS_TOPIC_ARN = aws_sns_topic.ops_notifications.arn
-      INSTANCE_ID   = aws_instance.web_server.id
+      STATE_TABLE                 = aws_dynamodb_table.state_table.name
+      AUDIT_TABLE                 = aws_dynamodb_table.audit_logs.name
+      OPS_TOPIC_ARN               = aws_sns_topic.ops_notifications.arn
+      INSTANCE_ID                 = aws_instance.web_server.id
+      APP_RECOVERY_ENABLED        = "true"
+      STORE_API_RECOVERY_DOCUMENT = aws_ssm_document.store_api_recovery.name
     }
   }
 

@@ -11,7 +11,7 @@ A staged portfolio load-test plan for a user-owned AWS demo deployment. It uses 
 | Parameter | Value |
 |---|---|
 | **Target** | Set `TARGET_URL` to the current CloudFront URL from Terraform output `cloudfront_domain` |
-| **Application** | Nginx serving static React frontend |
+| **Application** | Storefront static frontend plus the uncached Store API on the monitored EC2 instance |
 | **Self-Healing Trigger** | CloudWatch alarm at CPU > 75% for 5 min |
 | **Recovery Action** | Lambda → SSM → `systemctl restart nginx` |
 | **Monitoring** | CloudWatch metrics + React CloudOps Dashboard |
@@ -38,7 +38,7 @@ A staged portfolio load-test plan for a user-owned AWS demo deployment. It uses 
 | **Error rate** (% of non-2xx) | k6 | Detect when Nginx starts dropping |
 | **Requests/sec throughput** | k6 | Baseline capacity |
 | **CPU Utilization** | CloudWatch | Verify alarm threshold crossing |
-| **Memory Utilization** | SSM (custom) | Detect OOM conditions |
+| **Memory Utilization** | CloudWatch Agent `mem_used_percent` | Track memory on the same EC2 instance |
 | **Alarm State transitions** | CloudWatch API | Confirm self-healing triggers |
 | **Lambda invocations** | CloudWatch Logs | Confirm remediation fires |
 | **Recovery time** | Audit logs (DynamoDB/S3) | Measure MTTR |
@@ -50,6 +50,7 @@ A staged portfolio load-test plan for a user-owned AWS demo deployment. It uses 
 ### Phase 1: Pilot Test (Baseline)
 **Goal**: Establish normal performance baseline.
 - 10 virtual users, 2 minutes
+- Each iteration requests the Storefront page and `/store-api/api/products` on the monitored EC2; the `/store-api/*` CloudFront behavior must have caching disabled. A test of only the static page would measure CloudFront/S3, not EC2 load.
 - Measure baseline latency and throughput
 - Confirm instance stays healthy
 

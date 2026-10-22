@@ -2,7 +2,7 @@
 
 This project owner performs every AWS Console change. Finish one batch, send its requested evidence, and wait for AWS Core verification before moving to the next one. Do not share passwords, access keys, session tokens, Cognito tokens, or other secrets in screenshots or chat.
 
-These Console batches prepare and validate the current CloudOps stack. The new Fieldwork storefront is a frontend demonstration only: it has no product API, saved carts, order database, payment processor, or newsletter backend.
+These Console batches prepare and validate the current CloudOps stack. A local Fieldwork Store API contract and DynamoDB persistence adapter exist, but the commerce table and Store API runtime are not deployed. Storefront Cognito, API runtime, and commerce-table configuration are covered by later owner-run batches in `IMPLEMENTATION_BATCHES.md`; there is no payment processor or newsletter backend in scope.
 
 ## Batch 0 — Account, Region, and Budget Guardrail
 
@@ -63,7 +63,7 @@ Do this after the infrastructure is deployed by you and the initial Cognito user
 
 1. Open the CloudFront URL from Terraform output `cloudfront_domain` in a private browser window.
 2. Confirm the Fieldwork Store loads and the `/health` endpoint responds.
-3. Test search, category filters, quick add, quantity changes, empty cart, and simulated checkout. The page must state that checkout is a demo and no payment is collected.
+3. Treat this as a legacy static-delivery check only. The new API-backed catalog, customer order request, and admin pages cannot be verified in AWS until the owner completes the later Storefront Cognito, Store API runtime, and separate-delivery batches. No payment fields should appear.
 4. Open the **CloudOps dashboard** link. Confirm Cognito sign-in is required when configured. Confirm an unauthorized API request fails and a valid operator session works.
 5. Confirm the deployment uses the CloudFront HTTPS URL. Do not use the EC2 public IP as the public demo URL.
 
