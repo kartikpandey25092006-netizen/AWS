@@ -5,6 +5,7 @@ import { AuthProvider } from 'react-oidc-context'
 import { WebStorageStateStore } from 'oidc-client-ts'
 import App from './App.tsx'
 import { ErrorBoundary } from './ErrorBoundary.tsx'
+import ConstellationGrid from './components/ui/constellation-grid.tsx'
 import './index.css'
 
 const authority = import.meta.env.VITE_COGNITO_AUTHORITY || ''
@@ -27,7 +28,7 @@ function ConfigurationRequired() {
 
 const root = createRoot(rootElement)
 if (!authority || !clientId) {
-  root.render(<StrictMode><ConfigurationRequired /></StrictMode>)
+  root.render(<StrictMode><ConstellationGrid /><ConfigurationRequired /></StrictMode>)
 } else {
   root.render(
     <StrictMode>
@@ -44,7 +45,7 @@ if (!authority || !clientId) {
           stateStore={new WebStorageStateStore({ store: window.sessionStorage })}
           onSigninCallback={() => window.history.replaceState({}, document.title, window.location.pathname)}
         >
-          <App />
+          <ConstellationGrid /><App />
         </AuthProvider>
       </ErrorBoundary>
     </StrictMode>,
